@@ -1,0 +1,120 @@
+{
+  "projectType": "general",
+  "projectName": "iOS Reverse Engineering Reference",
+  "projectDescription": "A comprehensive reference guide for iOS IPA file reverse engineering with tools, techniques, and examples.",
+  "theme": "aspen",
+  "primaryColor": "#007AFF",
+  "lightColor": "#5AC8FA",
+  "darkColor": "#0A84FF",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "prerequisites",
+              "setup"
+            ]
+          },
+          {
+            "group": "Fundamentals",
+            "pages": [
+              "fundamentals/ios-app-structure",
+              "fundamentals/mach-o-format",
+              "fundamentals/code-signing",
+              "fundamentals/entitlements",
+              "fundamentals/ipa-files"
+            ]
+          },
+          {
+            "group": "Analysis Tools",
+            "pages": [
+              "tools/ghidra",
+              "tools/hopper",
+              "tools/ida-pro",
+              "tools/frida",
+              "tools/lldb"
+            ]
+          },
+          {
+            "group": "Analysis Techniques",
+            "pages": [
+              "techniques/static-analysis",
+              "techniques/dynamic-analysis",
+              "techniques/debugging",
+              "techniques/network-analysis"
+            ]
+          },
+          {
+            "group": "Swift & Objective-C",
+            "pages": [
+              "swift-objc/swift-name-mangling",
+              "swift-objc/method-swizzling",
+              "swift-objc/runtime-inspection"
+            ]
+          },
+          {
+            "group": "Obfuscation",
+            "pages": [
+              "obfuscation/overview",
+              "obfuscation/control-flow-flattening",
+              "obfuscation/string-encryption",
+              "obfuscation/anti-tampering",
+              "obfuscation/detection-techniques"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Scripts & Tools",
+        "groups": [
+          {
+            "group": "Ghidra Scripts",
+            "pages": [
+              "scripts/swift-name-demangler",
+              "scripts/swizzling-detector"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/sample-ipa-files",
+              "examples/control-flow-flattening-example",
+              "examples/swizzling-example"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Community",
+            "pages": [
+              "resources/contributing",
+              "resources/further-reading",
+              "resources/faq"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Swift name demangling for Ghidra",
+    "Method swizzling detection",
+    "Obfuscation technique examples",
+    "Sample IPA files with various obfuscation methods",
+    "Comprehensive iOS reverse engineering guides"
+  ],
+  "publicApiSurface": [
+    "SwiftNameDemangler.py - Demangles Swift class, function, and variable names in Ghidra",
+    "SwizzlingDetector.py - Detects method swizzling in iOS apps",
+    "ControlFlowFlattening.ipa - Example app with control flow flattening",
+    "ObjectiveSwizzling.ipa - Example app demonstrating method swizzling",
+    "NoTampering.ipa - Example app without anti-tampering measures"
+  ]
+}
