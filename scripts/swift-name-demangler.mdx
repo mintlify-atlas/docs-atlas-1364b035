@@ -1,0 +1,194 @@
+---
+title: 'Swift Name Demangler'
+description: 'Automatically demangle Swift class, function, and variable names in Ghidra'
+---
+
+## Overview
+
+The Swift Name Demangler is a Ghidra script that automatically demangles Swift symbols in your binary, making reverse engineering Swift applications significantly easier. It processes all functions and labels, converting mangled Swift names into human-readable identifiers.
+
+<Note>
+  This script requires Swift to be installed on your system. On macOS, it uses `xcrun swift-demangle`, while on other platforms it uses `swift-demangle` directly.
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Verify Swift Installation">
+    First, ensure Swift is installed on your system:
+    
+    ```bash
+    # macOS
+    xcrun swift-demangle --help
+    
+    # Linux/Other
+    swift-demangle --help
+    ```
+  </Step>
+  
+  <Step title="Download the Script">
+    Download `SwiftNameDemangler.py` to your Ghidra scripts directory:
+    
+    - **macOS/Linux**: `~/ghidra_scripts/`
+    - **Windows**: `%USERPROFILE%\ghidra_scripts\`
+  </Step>
+  
+  <Step title="Refresh Script Manager">
+    In Ghidra, open the Script Manager (Window → Script Manager) and click the "Refresh" button to load the new script.
+  </Step>
+</Steps>
+
+## Usage
+
+<Steps>
+  <Step title="Open Your Binary">
+    Load your iOS binary in Ghidra and complete the initial auto-analysis.
+  </Step>
+  
+  <Step title="Run the Script">
+    Open the Script Manager and search for "SwiftNameDemangler" or navigate to the Swift category. Double-click to run the script.
+  </Step>
+  
+  <Step title="Monitor Progress">
+    The script will output progress to the console:
+    - First, it processes all functions
+    - Then, it processes all labels (this may take several minutes for large binaries)
+  </Step>
+  
+  <Step title="Review Results">
+    After completion, browse your demangled functions and labels. Original names are preserved in comments.
+  </Step>
+</Steps>
+
+## Examples
+
+### Before Demangling
+
+```
+_$s10MyApp14ViewControllerC11viewDidLoadyyF
+_$s10MyApp6ConfigV12apiEndpointSSvpZ
+_$s10MyApp11DataManagerC13fetchUserData10completionyys6ResultOyAA4UserVs5Error_pGc_tF
+```
+
+### After Demangling
+
+```
+MyApp.ViewController.viewDidLoad
+MyApp.Config.apiEndpoint
+MyApp.DataManager.fetchUserData
+```
+
+Each demangled symbol includes a comment showing both the original mangled name and the full demangled signature (including parameters).
+
+## Script Code
+
+```python
+#Demangles Swift class, function, and variable names
+#@author LaurieWired
+#@category Swift
+
+# NOTES:
+# Requires Swift to be installed on the machine
+# Takes some time to run for larger applications
+
+from ghidra.program.model.listing import Function
+from ghidra.program.model.symbol import SymbolType
+from java.lang import System
+import subprocess
+
+def demangle_swift_name(mangled_name):
+    os_name = System.getProperty("os.name").lower()
+
+    # Determine the correct command based on the OS
+    if "mac" in os_name:
+        cmd = 'xcrun swift-demangle --simplified --compact'
+        mangled_name = "'{}'".format(mangled_name)  # Surround with single quotes
+
+    else:
+        cmd = 'swift-demangle --simplified --compact'
+
+    # Run as subprocess
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stdin=subprocess.PIPE)
+    proc.stdin.write(mangled_name)
+    proc.stdin.close()
+    demangled = proc.stdout.read().strip()
+    proc.wait()
+   
+    # Return demangler output. If it's not a Swift type, it will just return original name
+    return demangled
+
+def clean_demangled_name(name):
+
+    # Remove everything after the opening parenthesis (removes function arguments)
+    name = name.split("(")[0]
+   
+    # Replace spaces and other undesired characters
+    name = name.replace(" ", "_")
+    name = name.replace("<", "_")
+    name = name.replace(">", "_")
+
+    return name
+
+def beautify_swift_program():
+
+    # Demangle function names
+    print("Renaming functions")
+    for func in currentProgram.getFunctionManager().getFunctions(True):
+        demangled_name = demangle_swift_name(func.getName())
+        cleaned_name = clean_demangled_name(demangled_name)
+       
+        if cleaned_name != func.getName():
+            print("Original: {}, New: {}".format(func.getName(), cleaned_name))
+           
+            # Set new function name and comment
+            func.setComment("Original: {}\nDemangled: {}".format(func.getName(), demangled_name))
+            func.setName(cleaned_name, ghidra.program.model.symbol.SourceType.USER_DEFINED)
+
+    # Demangle labels if they are Swift types
+    print("\nRenaming labels. May take some time...")
+    for symbol in currentProgram.getSymbolTable().getAllSymbols(True):
+        if symbol.getSymbolType() == SymbolType.LABEL:
+            demangled_name = demangle_swift_name(symbol.getName())
+            cleaned_name = clean_demangled_name(demangled_name)
+           
+            if cleaned_name != symbol.getName():
+                print("Original: {}, New: {}".format(symbol.getName(), cleaned_name))
+               
+                # Set new label name and comment
+                # Ghidra already also renames pointers to labels as well
+                currentProgram.getListing().setComment(symbol.getAddress(), ghidra.program.model.listing.CodeUnit.EOL_COMMENT, "Original: {}\nDemangled: {}".format(symbol.getName(), demangled_name))
+                symbol.setName(cleaned_name, ghidra.program.model.symbol.SourceType.USER_DEFINED)
+
+beautify_swift_program()
+```
+
+## How It Works
+
+1. **OS Detection**: The script detects the operating system and uses the appropriate Swift demangling command
+2. **Function Processing**: Iterates through all functions in the program, demangling each name
+3. **Label Processing**: Processes all labels (which may include Swift type metadata and constants)
+4. **Name Cleaning**: Removes function parameters and special characters to create valid Ghidra identifiers
+5. **Comment Preservation**: Stores both original and fully demangled names in comments
+
+<Note>
+  The script may take several minutes to complete on large applications, as it must make a subprocess call for each symbol. Progress is printed to the console.
+</Note>
+
+## Troubleshooting
+
+### Script Fails to Run
+
+- Verify Swift is installed and accessible in your PATH
+- Check the Ghidra console for specific error messages
+- Ensure you have write permissions in your Ghidra project
+
+### Some Names Not Demangled
+
+- Not all symbols are Swift names - Objective-C and C symbols will remain unchanged
+- The script only processes names that successfully demangle; others are left as-is
+
+### Performance Issues
+
+- Large binaries may take 10+ minutes to process
+- Consider running the script overnight for very large applications
+- The script prints progress to help you monitor completion

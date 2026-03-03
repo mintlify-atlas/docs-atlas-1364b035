@@ -1,0 +1,404 @@
+---
+title: 'Static Analysis Techniques'
+description: 'Master static analysis methods for iOS reverse engineering including disassembly, decompilation, and vulnerability identification'
+icon: 'magnifying-glass-chart'
+---
+
+## Overview
+
+Static analysis involves examining an iOS application without executing it. This technique allows you to understand app structure, identify vulnerabilities, and analyze code logic before runtime.
+
+<Info>
+Static analysis is non-invasive and leaves no traces on the device, making it ideal for initial reconnaissance.
+</Info>
+
+## Disassembly and Decompilation
+
+### Using Hopper Disassembler
+
+Hopper is a powerful tool for disassembling iOS binaries and generating pseudo-code.
+
+<Steps>
+  <Step title="Extract the IPA">
+    Obtain the decrypted IPA file and extract the main binary:
+    ```bash
+    unzip MyApp.ipa
+    cd Payload/MyApp.app
+    file MyApp  # Verify it's a Mach-O binary
+    ```
+  </Step>
+  
+  <Step title="Load in Hopper">
+    Open the binary in Hopper and wait for analysis to complete. This may take several minutes for large applications.
+  </Step>
+  
+  <Step title="Generate Pseudo-code">
+    Navigate to interesting methods and press 'Alt+Enter' to view decompiled pseudo-code.
+  </Step>
+</Steps>
+
+<CodeGroup>
+```objc Assembly
+; Method: -[LoginViewController validateCredentials:]
+_objc_msgSend:
+    mov     x0, x19
+    adrp    x1, #0x100008000
+    ldr     x1, [x1, #0x890]
+    bl      _objc_msgSend
+    cbz     x0, loc_invalid
+```
+
+```objc Pseudo-code
+- (BOOL)validateCredentials:(NSString *)password {
+    if ([password length] < 8) {
+        return NO;
+    }
+    return [self checkPasswordHash:password];
+}
+```
+</CodeGroup>
+
+### Ghidra for iOS Analysis
+
+Ghidra is a free alternative with powerful analysis capabilities.
+
+<Accordion title="Setting up Ghidra for iOS">
+1. Install Ghidra and the iOS loader plugin
+2. Create a new project and import the Mach-O binary
+3. Run auto-analysis (Analysis > Auto Analyze)
+4. Use the Decompiler window (Window > Decompiler)
+
+<Note>
+Enable the "Objective-C" analyzer for better class and method recognition.
+</Note>
+</Accordion>
+
+## Reading Assembly Code
+
+### ARM64 Assembly Basics
+
+Modern iOS devices use ARM64 architecture. Understanding key instructions is essential.
+
+<CardGroup cols={2}>
+  <Card title="Data Movement" icon="arrows-left-right">
+    - `mov` - Move data between registers
+    - `ldr` - Load from memory
+    - `str` - Store to memory
+    - `adrp` - Load page address
+  </Card>
+  
+  <Card title="Branching" icon="code-branch">
+    - `b` - Unconditional branch
+    - `bl` - Branch with link (call)
+    - `ret` - Return from function
+    - `cbz/cbnz` - Conditional branches
+  </Card>
+  
+  <Card title="Arithmetic" icon="calculator">
+    - `add/sub` - Addition/Subtraction
+    - `mul` - Multiplication
+    - `cmp` - Compare values
+    - `and/orr` - Logical operations
+  </Card>
+  
+  <Card title="Objective-C Runtime" icon="at">
+    - `_objc_msgSend` - Method calls
+    - `_objc_retain/_objc_release` - Memory management
+    - `_objc_getClass` - Class lookup
+  </Card>
+</CardGroup>
+
+### Practical Example: Finding Authentication Logic
+
+<Tabs>
+  <Tab title="Scenario">
+    You need to understand how an app validates premium subscriptions.
+  </Tab>
+  
+  <Tab title="Approach">
+    1. Search for strings like "premium", "subscription", "validate"
+    2. Find cross-references to these strings
+    3. Locate the validation method
+    4. Analyze the assembly to understand the logic
+  </Tab>
+  
+  <Tab title="Assembly Analysis">
+    ```asm
+    ; -[SubscriptionManager isPremiumUser]
+    sub     sp, sp, #0x20
+    stp     x29, x30, [sp, #0x10]
+    add     x29, sp, #0x10
+    
+    ; Load receipt data
+    adrp    x8, #_OBJC_IVAR_$_SubscriptionManager._receipt@PAGE
+    ldr     x8, [x8, #_OBJC_IVAR_$_SubscriptionManager._receipt@PAGEOFF]
+    ldr     x0, [x0, x8]
+    
+    ; Check if receipt is nil
+    cbz     x0, loc_return_false
+    
+    ; Validate expiry date
+    adrp    x1, #selRef_expiryDate@PAGE
+    ldr     x1, [x1, #selRef_expiryDate@PAGEOFF]
+    bl      _objc_msgSend
+    
+    ; Compare with current date
+    ...
+    ```
+  </Tab>
+</Tabs>
+
+## Identifying Security Vulnerabilities
+
+### Common Vulnerability Patterns
+
+<AccordionGroup>
+  <Accordion title="Hardcoded Credentials" icon="key">
+    Search for suspicious string patterns:
+    
+    ```bash
+    strings MyApp | grep -i "password\|secret\|apikey\|token"
+    ```
+    
+    Look for:
+    - API keys in plaintext
+    - Default passwords
+    - Encryption keys
+    - Authentication tokens
+    
+    <Warning>
+    Hardcoded credentials are one of the most common vulnerabilities in iOS apps.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Insecure Data Storage" icon="database">
+    Check for usage of insecure storage mechanisms:
+    
+    - `NSUserDefaults` for sensitive data
+    - Unencrypted `plist` files
+    - World-readable files in Documents directory
+    
+    Search for these patterns in pseudo-code:
+    ```objc
+    [NSUserDefaults standardUserDefaults] setObject:password forKey:@"pwd"
+    [sensitiveData writeToFile:path atomically:YES]
+    ```
+  </Accordion>
+  
+  <Accordion title="Weak Cryptography" icon="shield-halved">
+    Identify weak or custom crypto implementations:
+    
+    Red flags:
+    - Custom encryption algorithms
+    - ECB mode encryption
+    - Hardcoded IV values
+    - MD5/SHA1 for password hashing
+    
+    ```objc
+    // Example of weak crypto
+    CCCrypt(kCCEncrypt, kCCAlgorithmDES, kCCOptionECBMode, ...)
+    ```
+    
+    <Tip>
+    Look for `CommonCrypto` API calls with weak algorithms.
+    </Tip>
+  </Accordion>
+  
+  <Accordion title="Jailbreak Detection" icon="mobile-screen">
+    Identifying jailbreak detection helps you bypass it:
+    
+    Common detection methods:
+    - File existence checks (`/Applications/Cydia.app`)
+    - Fork() system call
+    - Symbolic link verification
+    - Sandbox integrity checks
+    
+    ```objc
+    if ([[NSFileManager defaultManager] fileExistsAtPath:@"/Applications/Cydia.app"]) {
+        return YES; // Jailbroken
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## String Analysis
+
+### Extracting Strings
+
+Strings often reveal critical information about app functionality.
+
+<CodeGroup>
+```bash Basic Extraction
+strings MyApp > app_strings.txt
+```
+
+```bash Filtered Search
+strings MyApp | grep -E "(http|api|key|password|secret)"
+```
+
+```bash Unicode Strings
+strings -e l MyApp  # Little-endian 16-bit
+```
+</CodeGroup>
+
+### Finding String References
+
+<Steps>
+  <Step title="Locate interesting strings">
+    Find strings related to your target functionality:
+    ```bash
+    strings MyApp | grep -i "premium\|purchase\|subscription"
+    ```
+  </Step>
+  
+  <Step title="Find cross-references">
+    In Hopper or Ghidra:
+    - Navigate to the Strings section
+    - Find your target string
+    - View cross-references (X-refs) to see where it's used
+  </Step>
+  
+  <Step title="Analyze calling functions">
+    Examine the functions that reference these strings to understand the logic.
+  </Step>
+</Steps>
+
+### URL and Endpoint Discovery
+
+<Tabs>
+  <Tab title="API Endpoints">
+    ```bash
+    strings MyApp | grep -E "^https?://" | sort -u
+    ```
+    
+    This reveals:
+    - API base URLs
+    - Analytics endpoints
+    - Debug/staging servers
+    - Third-party integrations
+  </Tab>
+  
+  <Tab title="URL Schemes">
+    ```bash
+    strings MyApp | grep "://" | grep -v "http"
+    ```
+    
+    Discovers custom URL schemes for deep linking.
+  </Tab>
+  
+  <Tab title="Info.plist Analysis">
+    Extract and analyze the Info.plist:
+    ```bash
+    plutil -convert xml1 Info.plist -o -
+    ```
+    
+    Look for:
+    - URL schemes (`CFBundleURLTypes`)
+    - App Transport Security exceptions
+    - Required device capabilities
+  </Tab>
+</Tabs>
+
+## Practical Workflow
+
+<Steps>
+  <Step title="Initial Reconnaissance">
+    - Extract IPA and identify target binary
+    - Run `file`, `otool`, and `strings` for basic info
+    - Extract Info.plist and analyze configurations
+  </Step>
+  
+  <Step title="Load in Disassembler">
+    - Import binary into Hopper or Ghidra
+    - Wait for auto-analysis to complete
+    - Export class dumps for reference
+  </Step>
+  
+  <Step title="String Analysis">
+    - Search for relevant keywords
+    - Map string references to functionality
+    - Document API endpoints and secrets
+  </Step>
+  
+  <Step title="Code Analysis">
+    - Navigate to target methods
+    - Generate pseudo-code
+    - Document control flow and logic
+    - Identify vulnerabilities
+  </Step>
+  
+  <Step title="Documentation">
+    - Create detailed notes
+    - Screenshot key findings
+    - Map out app architecture
+    - Plan dynamic analysis targets
+  </Step>
+</Steps>
+
+<Check>
+**Static analysis complete when you have:**
+- Understanding of app architecture
+- List of interesting methods and classes
+- Identified potential vulnerabilities
+- API endpoints and authentication mechanisms
+- Targets for dynamic analysis
+</Check>
+
+## Advanced Techniques
+
+### Class-dump Analysis
+
+Generate Objective-C headers from the binary:
+
+```bash
+class-dump -H MyApp -o ./Headers/
+```
+
+<Info>
+Class dumps provide a clean view of all classes, methods, and properties without assembly.
+</Info>
+
+### Control Flow Analysis
+
+Use Ghidra's function graph view to:
+- Visualize execution paths
+- Identify error handling
+- Find unused/dead code
+- Understand complex conditionals
+
+### Binary Diffing
+
+Compare different versions to find changes:
+
+```bash
+# Using radare2
+r2 -A old_binary
+# In another terminal
+r2 -A new_binary
+# Use radiff2 for comparison
+radiff2 -g main old_binary new_binary > diff.dot
+```
+
+<Tip>
+Binary diffing is invaluable for finding security patches and understanding update changes.
+</Tip>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Hopper" icon="desktop" href="https://www.hopperapp.com">
+    Commercial disassembler for macOS
+  </Card>
+  
+  <Card title="Ghidra" icon="code" href="https://ghidra-sre.org">
+    NSA's free reverse engineering tool
+  </Card>
+  
+  <Card title="class-dump" icon="terminal" href="https://github.com/nygard/class-dump">
+    Generate Objective-C headers
+  </Card>
+  
+  <Card title="ARM64 Reference" icon="book" href="https://developer.arm.com/documentation">
+    Official ARM architecture documentation
+  </Card>
+</CardGroup>

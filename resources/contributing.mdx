@@ -1,0 +1,209 @@
+---
+title: 'Contributing'
+description: 'How to contribute to the iOS Reverse Engineering Reference project'
+icon: 'code-pull-request'
+---
+
+We welcome contributions from the community! Whether you're adding new scripts, submitting example IPA files, improving documentation, or fixing bugs, your contributions help make this project better for everyone.
+
+<Info>
+  All contributions should be submitted through GitHub pull requests to maintain code quality and enable community review.
+</Info>
+
+## Getting Started
+
+Before contributing, please:
+
+1. **Fork the repository** on GitHub
+2. **Clone your fork** locally
+3. **Create a new branch** for your contribution
+4. **Make your changes** following our guidelines
+5. **Submit a pull request** with a clear description
+
+<Card title="GitHub Repository" icon="github" href="https://github.com/LaurieWired/iOS_Reverse_Engineering">
+  Visit the main repository to get started with contributions
+</Card>
+
+## Contribution Guidelines
+
+<AccordionGroup>
+  <Accordion title="Adding New Scripts" icon="file-code">
+    ### Script Contribution Process
+
+    When contributing new analysis scripts:
+
+    1. **Place scripts in the appropriate directory**
+       - Frida scripts go in `/frida-scripts/`
+       - Python analysis tools go in `/tools/`
+       - Shell scripts go in `/scripts/`
+
+    2. **Follow naming conventions**
+       - Use descriptive, lowercase names with underscores
+       - Example: `hook_ui_methods.js`, `extract_strings.py`
+
+    3. **Include documentation**
+       - Add comments explaining the script's purpose
+       - Document all parameters and usage examples
+       - Include expected output format
+
+    4. **Test thoroughly**
+       - Test on multiple iOS versions if possible
+       - Verify script works on both jailbroken and non-jailbroken scenarios where applicable
+       - Include sample output in your PR
+
+    ```python Example Script Header
+    #!/usr/bin/env python3
+    """
+    extract_classes.py - Extract Objective-C classes from IPA files
+    
+    Usage: python3 extract_classes.py <ipa_file>
+    Output: List of all classes found in the binary
+    """
+    ```
+  </Accordion>
+
+  <Accordion title="Submitting Example IPA Files" icon="file-zipper">
+    ### IPA File Submissions
+
+    Example IPA files help others learn and test reverse engineering techniques.
+
+    <Warning>
+      Only submit IPA files that you have the legal right to distribute. Never submit copyrighted applications without permission.
+    </Warning>
+
+    **Acceptable submissions:**
+    - Your own applications
+    - Open-source iOS applications
+    - Sample apps created for educational purposes
+    - Apps with explicit permission from the copyright holder
+
+    **Submission process:**
+    1. Ensure the IPA is legally distributable
+    2. Include a README describing the app and interesting features to analyze
+    3. Note any specific security mechanisms (encryption, obfuscation, etc.)
+    4. Upload to a file hosting service and link in your PR
+    5. Include SHA-256 hash for verification
+
+    ```bash Generate SHA-256 Hash
+    shasum -a 256 example_app.ipa
+    ```
+  </Accordion>
+
+  <Accordion title="Documentation Improvements" icon="book">
+    ### Improving Documentation
+
+    Documentation contributions are highly valued!
+
+    **What to contribute:**
+    - Clarifications to existing tutorials
+    - Additional examples and use cases
+    - Corrections to technical inaccuracies
+    - New guides and walkthroughs
+    - Improved code comments
+
+    **Documentation guidelines:**
+    - Use clear, concise language
+    - Include code examples where appropriate
+    - Add screenshots for GUI-based tools
+    - Link to relevant external resources
+    - Follow the existing MDX formatting style
+
+    <Tip>
+      Small documentation fixes (typos, broken links) can be edited directly on GitHub using the web interface.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Code Quality Standards" icon="check">
+    ### Quality Requirements
+
+    All code contributions should meet these standards:
+
+    **General requirements:**
+    - Code should be well-commented and self-documenting
+    - Follow language-specific style guides (PEP 8 for Python, etc.)
+    - Include error handling for common failure cases
+    - No hardcoded credentials or sensitive information
+
+    **For Python scripts:**
+    - Use Python 3.7+
+    - Include type hints where appropriate
+    - Follow PEP 8 style guidelines
+    - Use virtual environments for dependencies
+
+    **For Frida scripts:**
+    - Test with the latest stable Frida version
+    - Include version requirements in comments
+    - Handle errors gracefully
+    - Use modern JavaScript (ES6+)
+
+    **For shell scripts:**
+    - Include shebang line
+    - Use POSIX-compliant syntax when possible
+    - Check for required tools before execution
+  </Accordion>
+</AccordionGroup>
+
+## Pull Request Process
+
+<Steps>
+  <Step title="Create a descriptive PR title">
+    Use a clear, concise title that describes your changes:
+    - "Add Frida script for hooking network requests"
+    - "Fix typo in IPA extraction tutorial"
+    - "Update tool requirements for iOS 17"
+  </Step>
+
+  <Step title="Write a detailed description">
+    Include:
+    - What changes you made and why
+    - Any issues your PR addresses
+    - Testing you performed
+    - Screenshots (if UI changes)
+  </Step>
+
+  <Step title="Wait for review">
+    Maintainers will review your PR and may request changes. Be responsive to feedback and make requested updates promptly.
+  </Step>
+
+  <Step title="Merge approval">
+    Once approved, a maintainer will merge your contribution. Thank you for contributing!
+  </Step>
+</Steps>
+
+## Community Guidelines
+
+<CardGroup cols={2}>
+  <Card title="Be Respectful" icon="handshake">
+    Treat all contributors with respect and professionalism. We maintain a welcoming environment for all skill levels.
+  </Card>
+
+  <Card title="Stay Legal" icon="scale-balanced">
+    Only contribute content that respects intellectual property rights and applicable laws.
+  </Card>
+
+  <Card title="Ask Questions" icon="circle-question">
+    Not sure about something? Open an issue or discussion to ask before submitting.
+  </Card>
+
+  <Card title="Give Credit" icon="award">
+    If your contribution builds on others' work, provide appropriate attribution.
+  </Card>
+</CardGroup>
+
+## Getting Help
+
+If you need help with your contribution:
+
+- **GitHub Issues**: For bug reports and feature requests
+- **GitHub Discussions**: For questions and general discussion
+- **Pull Request Comments**: For specific questions about your PR
+
+<Card title="Project Wiki" icon="book-open" href="https://github.com/LaurieWired/iOS_Reverse_Engineering/wiki/iOS-RE-Reference">
+  Check the wiki for additional guides and reference materials
+</Card>
+
+---
+
+<Note>
+  Thank you for contributing to the iOS Reverse Engineering Reference! Your contributions help the entire community learn and grow.
+</Note>

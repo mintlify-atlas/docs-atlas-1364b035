@@ -1,0 +1,808 @@
+---
+title: 'LLDB'
+description: 'Debugging iOS applications with LLDB'
+---
+
+LLDB (Low-Level Debugger) is Apple's debugger, built on the LLVM compiler infrastructure. It's the standard debugger for iOS and macOS development, providing powerful capabilities for runtime inspection and manipulation.
+
+## Overview
+
+LLDB is essential for iOS reverse engineering when you need:
+- Step-by-step execution analysis
+- Real-time memory inspection
+- Conditional breakpoints
+- Register and stack examination
+- Integration with Xcode and command-line workflows
+- Lower-level control than Frida for specific debugging tasks
+
+<Info>
+  LLDB provides more granular control than Frida but requires more setup. Use LLDB for precise debugging and Frida for rapid hooking/instrumentation.
+</Info>
+
+## Remote Debugging iOS Apps
+
+### Setting Up the Environment
+
+<Steps>
+  <Step title="Prepare Jailbroken Device">
+    <Warning>
+      LLDB remote debugging requires a jailbroken iOS device.
+    </Warning>
+    
+    ```bash
+    # SSH into your device
+    ssh root@<device-ip>
+    
+    # Install debugserver (usually comes with developer disk image)
+    # Check if debugserver exists
+    ls /Developer/usr/bin/debugserver
+    
+    # If not present, copy from Xcode:
+    # /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/
+    # DeviceSupport/<iOS-version>/DeveloperDiskImage.dmg
+    ```
+  </Step>
+  
+  <Step title="Sign debugserver with Task-for-PID Entitlement">
+    The stock debugserver lacks necessary entitlements. Create and sign:
+    
+    ```xml
+    <!-- entitlements.xml -->
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>com.apple.springboard.debugapplications</key>
+        <true/>
+        <key>get-task-allow</key>
+        <true/>
+        <key>task_for_pid-allow</key>
+        <true/>
+        <key>run-unsigned-code</key>
+        <true/>
+    </dict>
+    </plist>
+    ```
+    
+    ```bash
+    # Sign debugserver
+    codesign -s - --entitlements entitlements.xml -f /path/to/debugserver
+    
+    # Copy to device
+    scp debugserver root@<device-ip>:/usr/bin/
+    ```
+  </Step>
+  
+  <Step title="Start debugserver on Device">
+    <Tabs>
+      <Tab title="Attach to Running App">
+        ```bash
+        # Find the app's process ID
+        ps aux | grep -i YourApp
+        
+        # Start debugserver attached to PID
+        debugserver *:6666 --attach=<PID>
+        
+        # Or attach by name
+        debugserver *:6666 --attach=YourApp
+        ```
+      </Tab>
+      
+      <Tab title="Launch App">
+        ```bash
+        # Launch and wait for debugger
+        debugserver *:6666 --waitfor=YourApp
+        
+        # Or launch specific binary
+        debugserver *:6666 /var/containers/Bundle/Application/<GUID>/YourApp.app/YourApp
+        ```
+      </Tab>
+    </Tabs>
+    
+    <Note>
+      `*:6666` means listen on all interfaces on port 6666. You can use any port number.
+    </Note>
+  </Step>
+  
+  <Step title="Connect from Host Machine">
+    <Tabs>
+      <Tab title="Via WiFi">
+        ```bash
+        # On your Mac
+        lldb
+        
+        # Connect to device
+        (lldb) process connect connect://<device-ip>:6666
+        
+        # You should see:
+        # Process <PID> stopped
+        ```
+      </Tab>
+      
+      <Tab title="Via USB (Recommended)">
+        ```bash
+        # Forward port using iproxy (from libimobiledevice)
+        # Install: brew install libimobiledevice
+        iproxy 6666 6666
+        
+        # In another terminal
+        lldb
+        (lldb) process connect connect://localhost:6666
+        ```
+        
+        <Info>
+          USB connection is faster and more stable than WiFi.
+        </Info>
+      </Tab>
+    </Tabs>
+  </Step>
+</Steps>
+
+## Useful Commands
+
+### Navigation and Execution
+
+<Tabs>
+  <Tab title="Basic Control">
+    ```bash
+    # Continue execution
+    (lldb) continue
+    (lldb) c
+    
+    # Step over (next line)
+    (lldb) next
+    (lldb) n
+    
+    # Step into (follow function calls)
+    (lldb) step
+    (lldb) s
+    
+    # Step out (finish current function)
+    (lldb) finish
+    
+    # Step instruction (assembly level)
+    (lldb) nexti
+    (lldb) ni
+    
+    # Step into instruction
+    (lldb) stepi
+    (lldb) si
+    ```
+  </Tab>
+  
+  <Tab title="Process Control">
+    ```bash
+    # Attach to process by PID
+    (lldb) attach --pid <PID>
+    
+    # Attach by name
+    (lldb) attach --name YourApp
+    
+    # Detach from process
+    (lldb) detach
+    
+    # Kill process
+    (lldb) kill
+    
+    # Show process info
+    (lldb) process status
+    
+    # List loaded modules
+    (lldb) image list
+    ```
+  </Tab>
+  
+  <Tab title="Thread Management">
+    ```bash
+    # List all threads
+    (lldb) thread list
+    
+    # Select thread
+    (lldb) thread select <thread-id>
+    
+    # Show backtrace (call stack)
+    (lldb) bt
+    (lldb) thread backtrace
+    
+    # Backtrace for all threads
+    (lldb) bt all
+    
+    # Show current frame info
+    (lldb) frame info
+    
+    # Select frame
+    (lldb) frame select <frame-number>
+    ```
+  </Tab>
+</Tabs>
+
+### Breakpoints and Watchpoints
+
+<CodeGroup>
+```bash Address Breakpoints
+# Break at address
+(lldb) br s -a 0x100004a20
+(lldb) breakpoint set --address 0x100004a20
+
+# Break at address with condition
+(lldb) br s -a 0x100004a20 -c 'x0 == 0'
+
+# Break at offset from module
+(lldb) br s -a YourApp[0x4a20]
+
+# List breakpoints
+(lldb) br list
+
+# Delete breakpoint
+(lldb) br delete <breakpoint-id>
+
+# Disable/enable breakpoint
+(lldb) br disable <breakpoint-id>
+(lldb) br enable <breakpoint-id>
+
+# Delete all breakpoints
+(lldb) br delete
+```
+
+```bash Function Breakpoints
+# Break on Objective-C method
+(lldb) br s -n "-[LoginViewController validateCredentials:password:]"
+
+# Break on C function
+(lldb) br s -n ptrace
+
+# Break on function name pattern
+(lldb) br s -r '.*login.*'
+
+# Break on all methods in a class
+(lldb) br s -n "LoginViewController" -s YourApp
+
+# Break with action (run command when hit)
+(lldb) br command add <breakpoint-id>
+> po $arg1
+> c
+> DONE
+```
+
+```bash Watchpoints
+# Watch memory address
+(lldb) watchpoint set expression -- 0x12345678
+(lldb) wa s e -- 0x12345678
+
+# Watch variable
+(lldb) watchpoint set variable myVar
+(lldb) wa s v myVar
+
+# Watch for write only
+(lldb) wa s e -w write -- 0x12345678
+
+# Watch for read
+(lldb) wa s e -w read -- 0x12345678
+
+# List watchpoints
+(lldb) watchpoint list
+
+# Delete watchpoint
+(lldb) watchpoint delete <watchpoint-id>
+```
+
+```bash Conditional Breakpoints
+# Break when register equals value
+(lldb) br s -a 0x100004a20 -c 'x0 == 0x1'
+
+# Break when string matches
+(lldb) br s -n "-[ViewController login:]" -c '(BOOL)[(NSString *)$arg3 isEqualToString:@"admin"]'
+
+# Complex condition
+(lldb) br s -a 0x100004a20 -c 'x0 > 100 && x1 != 0'
+
+# Python callback for complex logic
+(lldb) br command add -s python <breakpoint-id>
+> if lldb.frame.FindVariable("username").GetSummary() == '"admin"':
+>     print("Admin login attempt!")
+> END
+```
+</CodeGroup>
+
+### Memory and Register Inspection
+
+<Tabs>
+  <Tab title="Registers">
+    ```bash
+    # Show all registers
+    (lldb) register read
+    
+    # Show specific register
+    (lldb) register read x0
+    (lldb) p/x $x0
+    
+    # Modify register
+    (lldb) register write x0 0x1
+    
+    # Show floating point registers
+    (lldb) register read --all
+    
+    # ARM64 common registers:
+    # x0-x30: General purpose
+    # x29: Frame pointer (FP)
+    # x30: Link register (LR)
+    # sp: Stack pointer
+    # pc: Program counter
+    
+    # Function arguments are in:
+    # x0: self (Objective-C)
+    # x1: _cmd (selector)
+    # x2-x7: Arguments 1-6
+    ```
+  </Tab>
+  
+  <Tab title="Memory Reading">
+    ```bash
+    # Read memory at address
+    (lldb) memory read 0x100004a20
+    (lldb) x 0x100004a20
+    
+    # Read 64 bytes
+    (lldb) memory read --count 64 0x100004a20
+    (lldb) x/64xb 0x100004a20
+    
+    # Read as different formats:
+    (lldb) x/s 0x100004a20    # String
+    (lldb) x/4xw 0x100004a20  # 4 words (32-bit) in hex
+    (lldb) x/4xg 0x100004a20  # 4 giant words (64-bit)
+    (lldb) x/i 0x100004a20    # Instruction
+    
+    # Find memory
+    (lldb) memory find -s "password" -- 0x100000000 0x200000000
+    ```
+  </Tab>
+  
+  <Tab title="Memory Writing">
+    ```bash
+    # Write byte
+    (lldb) memory write 0x100004a20 0x90
+    
+    # Write multiple bytes
+    (lldb) memory write 0x100004a20 0x90 0x90 0x90 0x90
+    
+    # Write string
+    (lldb) memory write 0x100004a20 "admin"
+    
+    # Write from file
+    (lldb) memory write --infile /path/to/data 0x100004a20
+    ```
+  </Tab>
+  
+  <Tab title="Stack">
+    ```bash
+    # Dump stack
+    (lldb) memory read $sp
+    (lldb) x/32xg $sp
+    
+    # Show stack frame variables
+    (lldb) frame variable
+    (lldb) fr v
+    
+    # Show specific variable
+    (lldb) frame variable username
+    
+    # Show with type info
+    (lldb) frame variable -T username
+    ```
+  </Tab>
+</Tabs>
+
+### Examining Objective-C Objects
+
+<CodeGroup>
+```bash Print Object
+# Print object description
+(lldb) po $x0
+(lldb) expression -O -- $x0
+
+# Print all properties of object
+(lldb) po [$x0 _ivarDescription]
+
+# Print methods
+(lldb) po [$x0 _methodDescription]
+
+# Print view hierarchy
+(lldb) po [[UIWindow keyWindow] recursiveDescription]
+
+# Print view controllers
+(lldb) po [[UIWindow keyWindow] rootViewController]
+```
+
+```bash Call Methods
+# Call method on object
+(lldb) po [$x0 description]
+
+# Call with arguments
+(lldb) po [(NSString *)$x2 isEqualToString:@"admin"]
+
+# Modify object
+(lldb) expr [(MyObject *)$x0 setUsername:@"hacker"]
+
+# Create new object
+(lldb) expr NSString *str = [NSString stringWithFormat:@"Test"]
+(lldb) po str
+```
+
+```bash Class Information
+# Get class name
+(lldb) po (char *)class_getName([($x0) class])
+
+# List all classes
+(lldb) image lookup -rn . --type
+
+# Find methods in class
+(lldb) image lookup -rn '\[LoginViewController '
+
+# Get method implementation
+(lldb) image lookup -n "-[LoginViewController validateCredentials:password:]"
+```
+</CodeGroup>
+
+## Practical Debugging Workflows
+
+### Finding and Breaking on Functions
+
+<Steps>
+  <Step title="Find Function Address">
+    ```bash
+    # Search for function by name
+    (lldb) image lookup -rn "validateCredentials"
+    
+    # Output shows address:
+    # 1 match found in /var/containers/Bundle/Application/.../YourApp:
+    #   Address: YourApp[0x0000000100004a20]
+    #   Summary: YourApp`-[LoginViewController validateCredentials:password:]
+    ```
+  </Step>
+  
+  <Step title="Set Breakpoint">
+    ```bash
+    # Break at the function
+    (lldb) br s -a 0x100004a20
+    
+    # Or by name
+    (lldb) br s -n "-[LoginViewController validateCredentials:password:]"
+    ```
+  </Step>
+  
+  <Step title="Trigger and Inspect">
+    ```bash
+    # Continue execution
+    (lldb) c
+    
+    # When breakpoint hits, inspect arguments
+    (lldb) po $x0  # self
+    (lldb) po $x1  # _cmd (selector)
+    (lldb) po $x2  # first argument (username)
+    (lldb) po $x3  # second argument (password)
+    
+    # Show registers
+    (lldb) register read
+    
+    # Show backtrace
+    (lldb) bt
+    ```
+  </Step>
+</Steps>
+
+### Bypassing Jailbreak Detection
+
+<CodeGroup>
+```bash Method 1: Patch Return Value
+# Find the jailbreak check function
+(lldb) image lookup -rn "isJailbroken"
+
+# Set breakpoint
+(lldb) br s -n "-[JailbreakDetector isJailbroken]"
+
+# When hit, force return false
+(lldb) thread return NO
+
+# Or modify return register before return
+(lldb) br s -a 0x<return-address>
+(lldb) br command add <breakpoint-id>
+> register write x0 0
+> c
+> DONE
+```
+
+```bash Method 2: Patch Instructions
+# Find the branch instruction
+(lldb) disassemble -n "-[JailbreakDetector isJailbroken]"
+
+# Output shows:
+# 0x100004a20: bl     0x100004b00  ; check_cydia
+# 0x100004a24: cbnz   w0, 0x100004a30  ; branch if jailbroken
+# 0x100004a28: ...
+
+# NOP the branch (ARM64 NOP = 0x1f2003d5)
+(lldb) memory write 0x100004a24 0xd5 0x03 0x20 0x1f
+
+# Verify
+(lldb) disassemble -s 0x100004a24 -c 1
+# Should show: nop
+```
+
+```bash Method 3: Skip Function Entirely
+# Set breakpoint at function start
+(lldb) br s -n "-[JailbreakDetector isJailbroken]"
+
+# When hit, skip to end and return NO
+(lldb) thread return NO
+
+# Or automate it
+(lldb) br command add <breakpoint-id>
+> thread return NO
+> DONE
+```
+</CodeGroup>
+
+### Dumping Decrypted Binary
+
+<Steps>
+  <Step title="Attach to Running App">
+    ```bash
+    # On device
+    debugserver *:6666 --attach=YourApp
+    
+    # On Mac
+    lldb
+    (lldb) process connect connect://<device-ip>:6666
+    ```
+  </Step>
+  
+  <Step title="Find Image Base">
+    ```bash
+    (lldb) image list YourApp
+    # Output:
+    # [  0] <UUID> 0x0000000100000000 /var/containers/.../YourApp.app/YourApp
+    
+    # Note the load address: 0x0000000100000000
+    ```
+  </Step>
+  
+  <Step title="Dump Memory">
+    ```bash
+    # Get binary size
+    (lldb) image dump sections YourApp
+    
+    # Dump to file (adjust size as needed)
+    (lldb) memory read --outfile /tmp/decrypted.bin --binary \
+           0x0000000100000000 0x0000000100000000+0x1000000
+    ```
+  </Step>
+  
+  <Step title="Fix Mach-O Header">
+    ```bash
+    # Transfer to Mac
+    scp root@<device-ip>:/tmp/decrypted.bin ~/
+    
+    # Use tools like MachOView or jtool to fix headers
+    # Or use automated tools like Clutch or frida-ios-dump
+    ```
+  </Step>
+</Steps>
+
+### Analyzing Crypto Operations
+
+<CodeGroup>
+```bash Track Crypto Functions
+# Break on CommonCrypto functions
+(lldb) br s -n CCCrypt
+(lldb) br s -n CC_SHA256
+(lldb) br s -n CCKeyDerivationPBKDF
+
+# When hit, examine parameters
+(lldb) br command add 1  # Assuming CCCrypt is breakpoint 1
+> # x0 = operation (encrypt/decrypt)
+> # x1 = algorithm
+> # x2 = options
+> # x3 = key
+> # x4 = key length
+> # x5 = IV
+> po "Operation: ", (int)$x0
+> po "Algorithm: ", (int)$x1
+> memory read -c 32 $x3  # Dump key
+> memory read -c 16 $x5  # Dump IV
+> c
+> DONE
+```
+
+```bash Extract Encryption Key
+# Set breakpoint before encryption
+(lldb) br s -n CCCrypt
+
+# When hit, dump the key
+(lldb) x/32xb $x3  # Key is in x3, dump 32 bytes
+
+# Save to file
+(lldb) memory read --outfile /tmp/key.bin --binary --count 32 $x3
+```
+</CodeGroup>
+
+## Advanced LLDB Features
+
+### Python Scripting
+
+<CodeGroup>
+```python Custom Command
+# Create lldb_commands.py
+import lldb
+
+def dump_keychain(debugger, command, result, internal_dict):
+    """Dump keychain items"""
+    target = debugger.GetSelectedTarget()
+    process = target.GetProcess()
+    thread = process.GetSelectedThread()
+    frame = thread.GetSelectedFrame()
+    
+    # Call SecItemCopyMatching
+    expr = '''
+        NSDictionary *query = @{
+            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecReturnAttributes: @YES,
+            (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitAll
+        };
+        CFTypeRef result = NULL;
+        OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+        result;
+    '''
+    
+    value = frame.EvaluateExpression(expr)
+    print("Keychain items:")
+    print(value.GetObjectDescription())
+
+def __lldb_init_module(debugger, internal_dict):
+    debugger.HandleCommand('command script add -f lldb_commands.dump_keychain dump_keychain')
+```
+
+```bash Load and Use
+# In LLDB
+(lldb) command script import ~/lldb_commands.py
+
+# Use custom command
+(lldb) dump_keychain
+```
+</CodeGroup>
+
+### Symbolic Breakpoints
+
+```bash
+# Break on any method containing "login"
+(lldb) br s -r ".*login.*" -s YourApp
+
+# Break on all methods in a file
+(lldb) br s -f LoginViewController.m
+
+# Break on Objective-C exception throw
+(lldb) br s -n objc_exception_throw
+
+# Break on malloc/free for tracking memory
+(lldb) br s -n malloc
+(lldb) br command add <breakpoint-id>
+> bt 5
+> register read x0
+> c
+> DONE
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Save and Load Sessions">
+    ```bash
+    # Save breakpoints
+    (lldb) br write -f ~/breakpoints.txt
+    
+    # Load breakpoints
+    (lldb) br read -f ~/breakpoints.txt
+    
+    # Save commands to file
+    (lldb) settings set target.save-jit-to-disk true
+    ```
+  </Accordion>
+  
+  <Accordion title="Use lldbinit for Automation">
+    ```bash
+    # Create ~/.lldbinit
+    command script import ~/lldb_commands.py
+    
+    # Auto-connect shortcut
+    command alias connect process connect connect://localhost:6666
+    
+    # Custom shortcuts
+    command alias bpt breakpoint set -a
+    command alias rd register read
+    ```
+  </Accordion>
+  
+  <Accordion title="Combine with Static Analysis">
+    1. Use Ghidra/IDA to find interesting functions
+    2. Note addresses and function names
+    3. Set breakpoints in LLDB at those addresses
+    4. Examine runtime behavior
+    5. Return to static analysis with new insights
+  </Accordion>
+  
+  <Accordion title="Performance Optimization">
+    - Use hardware breakpoints when possible (limited to 4 on ARM64)
+    - Disable breakpoints when not needed
+    - Use conditional breakpoints to reduce noise
+    - Detach when done to avoid impact on app performance
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<Warning>
+  Common issues and solutions:
+</Warning>
+
+<AccordionGroup>
+  <Accordion title="Can't Attach to Process">
+    ```bash
+    # Check debugserver permissions
+    ls -la /usr/bin/debugserver
+    
+    # Re-sign with proper entitlements
+    # See "Sign debugserver" step above
+    
+    # Check if app has anti-debugging
+    # Look for ptrace(PT_DENY_ATTACH)
+    # Patch it out or use anti-anti-debugging tweaks
+    ```
+  </Accordion>
+  
+  <Accordion title="Symbols Not Loading">
+    ```bash
+    # Add symbol path
+    (lldb) settings set target.debug-file-search-paths /path/to/symbols
+    
+    # Force symbol loading
+    (lldb) target symbols add /path/to/YourApp.app/YourApp
+    ```
+  </Accordion>
+  
+  <Accordion title="Connection Drops">
+    ```bash
+    # Use USB instead of WiFi
+    iproxy 6666 6666
+    
+    # Increase timeout
+    (lldb) settings set plugin.process.gdb-remote.packet-timeout 60
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Tools
+
+<CardGroup cols={2}>
+  <Card title="Frida" icon="code" href="/tools/frida">
+    Higher-level dynamic instrumentation
+  </Card>
+  
+  <Card title="Ghidra" icon="unlock" href="/tools/ghidra">
+    Find functions to debug
+  </Card>
+  
+  <Card title="IDA Pro" icon="microchip" href="/tools/ida-pro">
+    Identify debugging targets
+  </Card>
+  
+  <Card title="Hopper" icon="terminal" href="/tools/hopper">
+    Static analysis companion
+  </Card>
+</CardGroup>
+
+## Resources
+
+- [Official LLDB Documentation](https://lldb.llvm.org/)
+- [LLDB Python Reference](https://lldb.llvm.org/python_reference/index.html)
+- [iOS Debugging Magic (Technical QA)](https://developer.apple.com/library/archive/technotes/tn2239/_index.html)
+- [GDB to LLDB Command Map](https://lldb.llvm.org/use/map.html)
+- [Derek Selander's LLDB Scripts](https://github.com/DerekSelander/LLDB)

@@ -1,0 +1,696 @@
+---
+title: 'Debugging Techniques'
+description: 'Master iOS debugging with LLDB, breakpoints, memory manipulation, and anti-debugging bypass techniques'
+icon: 'bug'
+---
+
+## Overview
+
+Debugging is essential for understanding iOS app behavior at the instruction level. With a debugger, you can pause execution, inspect registers, modify memory, and control program flow.
+
+<Info>
+Debugging provides the most granular control over app execution, enabling precise analysis and manipulation.
+</Info>
+
+## Attaching Debuggers
+
+### Remote Debugging with debugserver
+
+Apple's debugserver enables remote debugging on iOS devices.
+
+<Steps>
+  <Step title="Extract debugserver from device">
+    ```bash
+    # SSH into jailbroken device
+    ssh root@<device-ip>
+    
+    # Copy debugserver
+    scp /Developer/usr/bin/debugserver computer@<ip>:~/
+    ```
+  </Step>
+  
+  <Step title="Sign debugserver with entitlements">
+    Create entitlements.xml:
+    ```xml
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>com.apple.springboard.debugapplications</key>
+        <true/>
+        <key>get-task-allow</key>
+        <true/>
+        <key>task_for_pid-allow</key>
+        <true/>
+        <key>run-unsigned-code</key>
+        <true/>
+    </dict>
+    </plist>
+    ```
+    
+    Sign it:
+    ```bash
+    codesign -s - --entitlements entitlements.xml -f debugserver
+    ```
+  </Step>
+  
+  <Step title="Deploy and run debugserver">
+    ```bash
+    # Copy back to device
+    scp debugserver root@<device-ip>:/usr/bin/
+    
+    # On device, attach to running app
+    debugserver *:6666 -a "Target App"
+    
+    # Or launch app under debugger
+    debugserver *:6666 /var/containers/Bundle/Application/.../MyApp.app/MyApp
+    ```
+  </Step>
+  
+  <Step title="Connect with LLDB">
+    ```bash
+    # On your computer
+    lldb
+    (lldb) process connect connect://<device-ip>:6666
+    ```
+  </Step>
+</Steps>
+
+### Alternative: Using Xcode
+
+<Tabs>
+  <Tab title="Debug on Simulator">
+    Easiest approach for testing:
+    
+    1. Install app on simulator
+    2. Xcode > Debug > Attach to Process
+    3. Select your app from the list
+    
+    <Note>
+    Simulator is x86_64/arm64 macOS, not actual iOS. Behavior may differ.
+    </Note>
+  </Tab>
+  
+  <Tab title="Debug Developer App">
+    For apps you can rebuild:
+    
+    1. Add your provisioning profile
+    2. Enable "Debug" configuration
+    3. Run normally from Xcode (Cmd+R)
+    4. Full debugging capabilities available
+  </Tab>
+  
+  <Tab title="Debug via USB">
+    For jailbroken devices:
+    
+    1. Install via Xcode or Configurator
+    2. Use debugserver over USB tunnel:
+    ```bash
+    iproxy 6666 6666
+    debugserver localhost:6666 -a "App"
+    ```
+  </Tab>
+</Tabs>
+
+## Setting Breakpoints
+
+### Basic Breakpoints
+
+<CodeGroup>
+```lldb Function Name
+# Break on Objective-C method
+(lldb) b "-[LoginViewController validatePassword:]"
+
+# Break on C function
+(lldb) b strcmp
+
+# Break on Swift method (use mangled name)
+(lldb) b _TFC6MyApp18ViewControllerC11viewDidLoadfT_T_
+```
+
+```lldb Memory Address
+# Break at specific address
+(lldb) b 0x00000001000a4000
+
+# Break at offset from module
+(lldb) b MyApp`0x4000
+```
+
+```lldb Conditional Breakpoints
+# Break only when condition is true
+(lldb) b validatePassword: -c "(int)[$arg3 length] > 5"
+
+# Break after N hits
+(lldb) b validatePassword:
+(lldb) breakpoint modify --ignore-count 10
+```
+</CodeGroup>
+
+### Advanced Breakpoint Techniques
+
+<AccordionGroup>
+  <Accordion title="Breakpoint Commands" icon="terminal">
+    Execute commands automatically when breakpoint hits:
+    
+    ```lldb
+    (lldb) b validatePassword:
+    (lldb) breakpoint command add 1
+    > po $arg1
+    > po $arg2  
+    > po (NSString *)$arg3
+    > continue
+    > DONE
+    ```
+    
+    This logs arguments and continues execution automatically.
+    
+    <Tip>
+    Use `continue` as the last command for non-invasive logging.
+    </Tip>
+  </Accordion>
+  
+  <Accordion title="Watchpoints" icon="eye">
+    Break when memory location is accessed:
+    
+    ```lldb
+    # Watch a variable
+    (lldb) watchpoint set variable self->_password
+    
+    # Watch a memory address
+    (lldb) watchpoint set expression -- 0x00000001000a4000
+    
+    # Watch with size
+    (lldb) watchpoint set expression -w write -s 4 -- 0x00000001000a4000
+    
+    # List watchpoints
+    (lldb) watchpoint list
+    
+    # Delete watchpoint
+    (lldb) watchpoint delete 1
+    ```
+    
+    <Warning>
+    Hardware watchpoints are limited (usually 4 on ARM). Use sparingly.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Symbolic Breakpoints" icon="bookmark">
+    Break on all methods matching a pattern:
+    
+    ```lldb
+    # Break on all methods containing "password"
+    (lldb) rb password
+    
+    # Break on all methods in a class
+    (lldb) rb LoginViewController
+    
+    # Break on category methods
+    (lldb) rb "\[NSString\(Crypto\) *\]"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Practical Breakpoint Scenarios
+
+<Tabs>
+  <Tab title="SSL Pinning">
+    Break on certificate validation:
+    
+    ```lldb
+    # Common SSL validation methods
+    (lldb) b SecTrustEvaluate
+    (lldb) b SecTrustEvaluateWithError
+    (lldb) b "-[NSURLSession didReceiveChallenge:completionHandler:]"
+    
+    # When hit, force success:
+    (lldb) expr (OSStatus)$rax = 0  # SecTrustEvaluate returns success
+    (lldb) c
+    ```
+  </Tab>
+  
+  <Tab title="Premium Features">
+    Break on subscription checks:
+    
+    ```lldb
+    (lldb) b "-[SubscriptionManager isPremiumUser]"
+    
+    # When hit, force true return:
+    (lldb) finish  # Let method complete
+    (lldb) expr (BOOL)$rax = 1  # Change return value to YES
+    (lldb) c
+    ```
+  </Tab>
+  
+  <Tab title="Login Bypass">
+    ```lldb
+    (lldb) b "-[LoginViewController loginButtonTapped:]"
+    
+    # Skip the entire method and proceed to next screen
+    (lldb) thread return
+    (lldb) expr [self performSegueWithIdentifier:@"LoginSuccess" sender:nil]
+    (lldb) c
+    ```
+  </Tab>
+</Tabs>
+
+## Memory Manipulation
+
+### Reading Memory
+
+<CodeGroup>
+```lldb Read Variables
+# Print Objective-C object
+(lldb) po $arg1  # self
+(lldb) po $arg2  # selector
+(lldb) po $arg3  # first argument
+
+# Print variable
+(lldb) p self->_username
+(lldb) po [self username]
+
+# Print register
+(lldb) register read
+(lldb) p/x $rax
+```
+
+```lldb Read Memory
+# Read raw memory
+(lldb) memory read 0x00000001000a4000
+(lldb) x/32xb 0x00000001000a4000  # 32 bytes as hex
+
+# Read as string
+(lldb) x/s 0x00000001000a4000
+(lldb) memory read -f s 0x00000001000a4000
+
+# Read with formatting
+(lldb) x/4xg 0x00000001000a4000  # 4 giant words (64-bit)
+(lldb) x/16xw 0x00000001000a4000  # 16 words (32-bit)
+```
+
+```lldb Dump Memory
+# Dump to file
+(lldb) memory read --outfile /tmp/dump.bin --count 4096 0x00000001000a4000
+
+# Find memory region
+(lldb) image list  # List all modules
+(lldb) image dump sections MyApp  # Show sections
+```
+</CodeGroup>
+
+### Writing Memory
+
+<Tabs>
+  <Tab title="Modify Variables">
+    ```lldb
+    # Change Objective-C property
+    (lldb) po self.isPremium = YES
+    (lldb) expr self->_isPremium = 1
+    
+    # Change local variable
+    (lldb) expr password = @"bypass123"
+    
+    # Modify return value
+    (lldb) finish  # Execute until return
+    (lldb) expr (BOOL)$rax = 1
+    ```
+  </Tab>
+  
+  <Tab title="Patch Memory">
+    ```lldb
+    # Write single byte
+    (lldb) memory write 0x00000001000a4000 0x90  # NOP instruction
+    
+    # Write multiple bytes
+    (lldb) memory write 0x00000001000a4000 0x90 0x90 0x90 0x90
+    
+    # Write from file
+    (lldb) memory write --infile /tmp/patch.bin 0x00000001000a4000
+    ```
+    
+    <Warning>
+    Memory patches are lost when app restarts. Use binary patching for permanent changes.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Call Functions">
+    ```lldb
+    # Call Objective-C method
+    (lldb) expr (void)[self dismissViewControllerAnimated:YES completion:nil]
+    
+    # Call with return value
+    (lldb) expr (NSString *)[self.username uppercaseString]
+    
+    # Call C function
+    (lldb) expr (int)printf("Hello from LLDB\\n")
+    
+    # Allocate and call
+    (lldb) expr id $url = [NSURL URLWithString:@"https://api.example.com"]
+    (lldb) expr (void)[self loadURL:$url]
+    ```
+  </Tab>
+</Tabs>
+
+### Advanced Memory Techniques
+
+<AccordionGroup>
+  <Accordion title="Search Memory" icon="magnifying-glass">
+    ```lldb
+    # Find byte pattern
+    (lldb) memory find -s "password" 0x100000000 0x200000000
+    
+    # Find hex pattern
+    (lldb) memory find -e 0x1234567890abcdef 0x100000000 0x200000000
+    
+    # Search all readable memory
+    (lldb) script
+    >>> import lldb
+    >>> for region in lldb.process.GetMemoryRegions():
+    ...     if region.IsReadable():
+    ...         # Search this region
+    ...         pass
+    ```
+  </Accordion>
+  
+  <Accordion title="Heap Inspection" icon="layer-group">
+    ```lldb
+    # List all objects of a class
+    (lldb) script
+    >>> def find_instances(classname):
+    ...     return lldb.debugger.HandleCommand(
+    ...         'expression -lobjc -O -- [[[NSMutableArray alloc] init] '
+    ...         'init]; @import Foundation; '
+    ...         '[NSObject performSelector:NSSelectorFromString(@"_copyDescription")]'
+    ...     )
+    
+    # Use Heap tool (on macOS)
+    $ heap MyApp.app | grep LoginViewController
+    $ heap MyApp.app -addresses all | grep 0x600
+    ```
+  </Accordion>
+  
+  <Accordion title="Modify Code at Runtime" icon="pen-to-square">
+    ```lldb
+    # Change instruction (ARM64)
+    # ret instruction is 0xD65F03C0
+    (lldb) memory write 0x00000001000a4000 0xC0 0x03 0x5F 0xD6
+    
+    # NOP instruction is 0xD503201F
+    (lldb) memory write 0x00000001000a4008 0x1F 0x20 0x03 0xD5
+    
+    # Useful for patching checks
+    # Find: bl _jailbreak_check
+    # Replace with: nop (0xD503201F)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Anti-Debugging Bypass
+
+### Common Anti-Debugging Techniques
+
+<Tabs>
+  <Tab title="ptrace Detection">
+    Apps use `ptrace(PT_DENY_ATTACH)` to prevent debuggers:
+    
+    ```c
+    // What apps do
+    ptrace(PT_DENY_ATTACH, 0, 0, 0);
+    ```
+    
+    **Bypass methods:**
+    
+    <Steps>
+      <Step title="Hook ptrace with Frida">
+        ```javascript
+        Interceptor.attach(Module.findExportByName(null, 'ptrace'), {
+            onEnter: function(args) {
+                if (args[0].toInt32() === 31) {  // PT_DENY_ATTACH
+                    console.log('[!] Blocking PT_DENY_ATTACH');
+                    args[0] = ptr(0);
+                }
+            }
+        });
+        ```
+      </Step>
+      
+      <Step title="Binary patching">
+        ```bash
+        # Find ptrace call in Hopper
+        # Replace entire function with:
+        # mov w0, #0
+        # ret
+        ```
+      </Step>
+      
+      <Step title="Runtime hooking with LLDB">
+        ```lldb
+        (lldb) b ptrace
+        (lldb) breakpoint command add 1
+        > expr (int)$arg1 = 0
+        > continue
+        > DONE
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+  
+  <Tab title="sysctl Detection">
+    Apps check for debugger presence:
+    
+    ```c
+    // Detection code
+    struct kinfo_proc info;
+    info.kp_proc.p_flag & P_TRACED  // Returns true if debugged
+    ```
+    
+    **Bypass:**
+    
+    ```javascript
+    // Frida script
+    var sysctl = Module.findExportByName(null, 'sysctl');
+    
+    Interceptor.attach(sysctl, {
+        onEnter: function(args) {
+            this.name = args[0];
+            this.oldp = args[2];
+        },
+        onLeave: function(retval) {
+            // Check if querying process info
+            var name = Memory.readU32(this.name);
+            if (name === 1 && Memory.readU32(this.name.add(4)) === 14) {
+                // Clear P_TRACED flag (0x00000800)
+                var p_flag = this.oldp.add(0x20);
+                var flags = Memory.readU32(p_flag);
+                Memory.writeU32(p_flag, flags & ~0x800);
+                console.log('[!] Cleared P_TRACED flag');
+            }
+        }
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Timing Checks">
+    Apps measure execution time to detect breakpoints:
+    
+    ```c
+    uint64_t start = mach_absolute_time();
+    // Sensitive code
+    uint64_t end = mach_absolute_time();
+    if (end - start > threshold) exit(1);  // Debugger detected
+    ```
+    
+    **Bypass:**
+    
+    ```javascript
+    // Hook mach_absolute_time to return consistent values
+    var mach_absolute_time = Module.findExportByName(null, 'mach_absolute_time');
+    var counter = 0;
+    
+    Interceptor.replace(mach_absolute_time, new NativeCallback(function() {
+        counter += 100;  // Small increment
+        return counter;
+    }, 'uint64', []));
+    ```
+    
+    Or use LLDB:
+    ```lldb
+    (lldb) b mach_absolute_time
+    (lldb) breakpoint command add 1
+    > expr (uint64_t)$rax = $rax + 100
+    > continue
+    > DONE
+    ```
+  </Tab>
+</Tabs>
+
+### Advanced Anti-Debugging
+
+<CardGroup cols={2}>
+  <Card title="Exception Port Monitoring" icon="triangle-exclamation">
+    ```c
+    // Apps monitor exception ports
+    task_get_exception_ports(mach_task_self(), ...);
+    ```
+    
+    Hook to hide debugger:
+    ```javascript
+    Interceptor.attach(
+        Module.findExportByName(null, 'task_get_exception_ports'),
+        {
+            onLeave: function(retval) {
+                // Clear exception port masks
+                // that indicate debugger presence
+            }
+        }
+    );
+    ```
+  </Card>
+  
+  <Card title="Signal Handling" icon="bell">
+    ```c
+    // Apps handle SIGTRAP
+    signal(SIGTRAP, handler);
+    ```
+    
+    Bypass:
+    ```lldb
+    # Ignore SIGTRAP signals
+    (lldb) process handle SIGTRAP --stop false --pass false --notify true
+    ```
+  </Card>
+  
+  <Card title="Inline Checks" icon="code">
+    ```asm
+    ; Inline assembly checks
+    mov x0, #31  ; PT_DENY_ATTACH
+    svc #0x80    ; syscall
+    ```
+    
+    Patch directly:
+    ```lldb
+    (lldb) memory write 0x1000a4000 0x1F 0x20 0x03 0xD5  # NOP
+    ```
+  </Card>
+  
+  <Card title="Integrity Checks" icon="shield-check">
+    Apps checksum their code:
+    ```c
+    if (calculate_checksum() != expected) exit(1);
+    ```
+    
+    Hook checksum function:
+    ```lldb
+    (lldb) b calculate_checksum
+    (lldb) breakpoint command add 1
+    > thread return 0x12345678
+    > continue
+    > DONE
+    ```
+  </Card>
+</CardGroup>
+
+## Debugging Workflows
+
+<Steps>
+  <Step title="Initial Setup">
+    - Attach debugger to running app
+    - Set breakpoints on entry points
+    - Configure signal handling
+    - Load symbols if available
+  </Step>
+  
+  <Step title="Locate Target Code">
+    - Use static analysis to find addresses
+    - Break on API calls of interest
+    - Use symbolic breakpoints for classes
+  </Step>
+  
+  <Step title="Analyze Execution">
+    - Step through code
+    - Inspect registers and stack
+    - Log function arguments
+    - Trace execution paths
+  </Step>
+  
+  <Step title="Test Modifications">
+    - Change variables in real-time
+    - Patch instructions temporarily
+    - Call functions manually
+    - Verify behavior changes
+  </Step>
+  
+  <Step title="Document Findings">
+    - Note important addresses
+    - Save successful patches
+    - Record function signatures
+    - Map out control flow
+  </Step>
+</Steps>
+
+<Check>
+**Debugging session successful when:**
+- You understand the execution flow
+- Can modify behavior predictably
+- Bypassed all anti-debugging measures
+- Documented all findings for later use
+</Check>
+
+## LLDB Python Scripting
+
+Extend LLDB with Python for automation:
+
+```python
+# auto_bypass.py - Automatically bypass common protections
+import lldb
+
+def bypass_jailbreak(debugger, command, result, internal_dict):
+    """Bypass jailbreak detection"""
+    target = debugger.GetSelectedTarget()
+    process = target.GetProcess()
+    
+    # Hook fileExistsAtPath:
+    debugger.HandleCommand(
+        'breakpoint set -n "-[NSFileManager fileExistsAtPath:]" '
+        '-C "expr (BOOL)$rax = 0" -C "continue"'
+    )
+    
+    # Hook fork
+    debugger.HandleCommand(
+        'breakpoint set -n fork '
+        '-C "finish" -C "expr (int)$rax = 0" -C "continue"'
+    )
+    
+    print("[+] Jailbreak bypass activated")
+
+def __lldb_init_module(debugger, internal_dict):
+    debugger.HandleCommand(
+        'command script add -f auto_bypass.bypass_jailbreak bypass'
+    )
+    print('[+] Loaded auto_bypass commands')
+```
+
+Load in LLDB:
+```lldb
+(lldb) command script import ~/auto_bypass.py
+(lldb) bypass
+```
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="LLDB Documentation" icon="book" href="https://lldb.llvm.org">
+    Official LLDB reference
+  </Card>
+  
+  <Card title="iOS Debugging Magic" icon="hat-wizard" href="https://github.com/DerekSelander/LLDB">
+    Advanced LLDB scripts for iOS
+  </Card>
+  
+  <Card title="Frida Scripts" icon="code" href="https://codeshare.frida.re">
+    Community debugging scripts
+  </Card>
+  
+  <Card title="ARM64 ISA" icon="microchip" href="https://developer.arm.com/documentation">
+    ARM instruction reference
+  </Card>
+</CardGroup>

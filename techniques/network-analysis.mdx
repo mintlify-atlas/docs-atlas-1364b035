@@ -1,0 +1,911 @@
+---
+title: 'Network Analysis'
+description: 'Comprehensive guide to intercepting iOS network traffic, bypassing SSL pinning, and analyzing API communications'
+icon: 'network-wired'
+---
+
+## Overview
+
+Network analysis reveals how iOS apps communicate with servers, exposes API endpoints, and uncovers authentication mechanisms. This is crucial for understanding app functionality and identifying security vulnerabilities.
+
+<Info>
+Most modern iOS apps use HTTPS with certificate pinning, requiring advanced techniques to intercept traffic.
+</Info>
+
+## Intercepting Network Traffic
+
+### Setting Up a Proxy
+
+<Tabs>
+  <Tab title="Burp Suite">
+    <Steps>
+      <Step title="Configure Burp">
+        1. Open Burp Suite
+        2. Proxy > Options > Proxy Listeners
+        3. Add listener on all interfaces (e.g., 0.0.0.0:8080)
+        4. Enable "Support invisible proxying"
+      </Step>
+      
+      <Step title="Configure iOS Device">
+        1. Settings > Wi-Fi > Select network
+        2. Scroll down to HTTP Proxy
+        3. Select "Manual"
+        4. Server: Your computer's IP
+        5. Port: 8080
+      </Step>
+      
+      <Step title="Install CA Certificate">
+        1. On device, browse to http://burp
+        2. Download CA certificate
+        3. Settings > Profile Downloaded > Install
+        4. Settings > General > About > Certificate Trust Settings
+        5. Enable full trust for Burp CA
+      </Step>
+    </Steps>
+    
+    <Warning>
+    iOS 10.3+ requires explicit trust for user-installed certificates.
+    </Warning>
+  </Tab>
+  
+  <Tab title="mitmproxy">
+    ```bash
+    # Install mitmproxy
+    brew install mitmproxy
+    
+    # Start proxy
+    mitmproxy --listen-host 0.0.0.0 --listen-port 8080
+    
+    # Or use web interface
+    mitmweb --listen-host 0.0.0.0 --listen-port 8080
+    ```
+    
+    Install certificate:
+    1. Configure device proxy (same as Burp)
+    2. Visit http://mitm.it on device
+    3. Download iOS certificate
+    4. Install and trust the certificate
+    
+    <Tip>
+    mitmweb provides a modern web UI for analyzing traffic.
+    </Tip>
+  </Tab>
+  
+  <Tab title="Charles Proxy">
+    <Steps>
+      <Step title="Enable SSL Proxying">
+        Proxy > SSL Proxying Settings > Enable SSL Proxying
+        
+        Add locations:
+        - Host: *
+        - Port: 443
+      </Step>
+      
+      <Step title="Configure Device">
+        Help > SSL Proxying > Install Charles Root Certificate on Mobile Device
+        
+        Follow on-screen instructions
+      </Step>
+      
+      <Step title="Trust Certificate">
+        Settings > General > About > Certificate Trust Settings
+        
+        Enable full trust for Charles Proxy CA
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+### VPN-Based Interception
+
+<Accordion title="Using ProxyMan">
+ProxyMan creates a VPN tunnel for seamless interception:
+
+1. Install ProxyMan on macOS
+2. Install ProxyMan companion app from App Store
+3. Pair device via QR code
+4. Traffic automatically routed through proxy
+
+**Advantages:**
+- No manual proxy configuration
+- Works with all apps
+- Captures localhost traffic
+- Automatic certificate installation
+
+<Note>
+ProxyMan requires both devices on same network for initial pairing.
+</Note>
+</Accordion>
+
+### Packet Capture with tcpdump
+
+For low-level packet analysis:
+
+```bash
+# SSH into jailbroken device
+ssh root@<device-ip>
+
+# Install tcpdump via Cydia
+apt-get install tcpdump
+
+# Capture all traffic
+tcpdump -i any -w /tmp/capture.pcap
+
+# Capture only HTTP/HTTPS
+tcpdump -i any -n 'tcp port 80 or tcp port 443' -w /tmp/http.pcap
+
+# Copy to computer for analysis
+scp root@<device-ip>:/tmp/capture.pcap .
+
+# Analyze with Wireshark
+wireshark capture.pcap
+```
+
+<CodeGroup>
+```bash Filter by Host
+tcpdump -i any -n host api.example.com -w /tmp/api.pcap
+```
+
+```bash Filter by IP
+tcpdump -i any -n dst 192.168.1.100 -w /tmp/server.pcap
+```
+
+```bash Real-time monitoring
+tcpdump -i any -n -A 'tcp port 443'
+```
+</CodeGroup>
+
+## SSL Pinning Bypass
+
+### Understanding SSL Pinning
+
+<AccordionGroup>
+  <Accordion title="Certificate Pinning" icon="certificate">
+    App validates the server's certificate against a bundled copy:
+    
+    ```objc
+    // Certificate pinning implementation
+    - (void)URLSession:(NSURLSession *)session
+        didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
+        completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
+        
+        NSData *serverCert = challenge.protectionSpace.serverTrust.certificateAtIndex(0);
+        NSData *pinnedCert = [self loadPinnedCertificate];
+        
+        if ([serverCert isEqualToData:pinnedCert]) {
+            // Certificate matches
+            NSURLCredential *credential = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
+            completionHandler(NSURLSessionAuthChallengeUseCredential, credential);
+        } else {
+            // Certificate mismatch - reject
+            completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
+        }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Public Key Pinning" icon="key">
+    App validates the public key instead of entire certificate:
+    
+    ```objc
+    // Extract and compare public keys
+    SecKeyRef serverKey = SecTrustCopyPublicKey(serverTrust);
+    SecKeyRef pinnedKey = [self loadPinnedPublicKey];
+    
+    if (SecKeyCompare(serverKey, pinnedKey) == 0) {
+        // Keys match
+    }
+    ```
+    
+    Harder to bypass than certificate pinning.
+  </Accordion>
+  
+  <Accordion title="TrustKit Framework" icon="shield">
+    Many apps use TrustKit for pinning:
+    
+    ```objc
+    TrustKit *trustKit = [[TrustKit alloc] initWithConfiguration:@{
+        @"api.example.com": @{
+            kTSKPublicKeyHashes: @[
+                @"sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                @"sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+            ]
+        }
+    }];
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Bypass Techniques
+
+<Tabs>
+  <Tab title="SSL Kill Switch">
+    Easiest method for jailbroken devices:
+    
+    <Steps>
+      <Step title="Install from Cydia">
+        1. Add repo: https://julioverne.github.io/
+        2. Search for "SSL Kill Switch 2"
+        3. Install the package
+      </Step>
+      
+      <Step title="Enable in Settings">
+        1. Settings > SSL Kill Switch 2
+        2. Enable "Disable Certificate Validation"
+        3. Optionally select specific apps
+      </Step>
+      
+      <Step title="Restart SpringBoard">
+        ```bash
+        killall -9 SpringBoard
+        ```
+      </Step>
+    </Steps>
+    
+    <Warning>
+    SSL Kill Switch doesn't work with all pinning implementations. Have alternatives ready.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Frida Script">
+    Universal bypass for most apps:
+    
+    ```javascript
+    // ssl-bypass.js
+    if (ObjC.available) {
+        // Bypass NSURLSession certificate validation
+        var NSURLSession = ObjC.classes.NSURLSession;
+        var SessionDelegate = ObjC.classes.__NSURLSessionDelegate;
+        
+        Interceptor.attach(
+            SessionDelegate['- URLSession:didReceiveChallenge:completionHandler:'].implementation,
+            {
+                onEnter: function(args) {
+                    console.log('[+] Bypassing SSL pinning');
+                    
+                    var challenge = ObjC.Object(args[3]);
+                    var completionHandler = new ObjC.Block(args[4]);
+                    
+                    // Create credential that accepts all
+                    var credential = ObjC.classes.NSURLCredential
+                        .credentialForTrust_(challenge.protectionSpace().serverTrust());
+                    
+                    // Call completion handler with credential
+                    completionHandler.implementation(1, credential);
+                }
+            }
+        );
+        
+        // Bypass SecTrustEvaluate
+        var SecTrustEvaluate = Module.findExportByName('Security', 'SecTrustEvaluate');
+        Interceptor.replace(SecTrustEvaluate, new NativeCallback(function(trust, result) {
+            console.log('[+] SecTrustEvaluate called - forcing success');
+            Memory.writeU8(result, 1);  // kSecTrustResultProceed
+            return 0;  // errSecSuccess
+        }, 'int', ['pointer', 'pointer']));
+        
+        // Bypass AFNetworking if present
+        if (ObjC.classes.AFHTTPSessionManager) {
+            Interceptor.attach(
+                ObjC.classes.AFSecurityPolicy['- setSSLPinningMode:'].implementation,
+                {
+                    onEnter: function(args) {
+                        console.log('[+] Disabling AFNetworking SSL pinning');
+                        args[2] = ptr(0);  // AFSSLPinningModeNone
+                    }
+                }
+            );
+            
+            Interceptor.attach(
+                ObjC.classes.AFSecurityPolicy['- setAllowInvalidCertificates:'].implementation,
+                {
+                    onEnter: function(args) {
+                        args[2] = ptr(1);  // Allow invalid certs
+                    }
+                }
+            );
+        }
+        
+        // Bypass TrustKit if present
+        if (ObjC.classes.TrustKit) {
+            Interceptor.attach(
+                ObjC.classes.TSKPinningValidator['- evaluateTrust:forHostname:'].implementation,
+                {
+                    onEnter: function(args) {
+                        console.log('[+] Bypassing TrustKit');
+                    },
+                    onLeave: function(retval) {
+                        retval.replace(ptr(1));  // Return YES
+                    }
+                }
+            );
+        }
+        
+        console.log('[+] SSL pinning bypass loaded');
+    }
+    ```
+    
+    Run it:
+    ```bash
+    frida -U -l ssl-bypass.js "Target App"
+    ```
+  </Tab>
+  
+  <Tab title="objection">
+    objection provides quick SSL bypass:
+    
+    ```bash
+    # Install objection
+    pip install objection
+    
+    # Launch app with objection
+    objection -g "Target App" explore
+    
+    # Disable SSL pinning
+    ios sslpinning disable
+    
+    # Additional checks
+    ios sslpinning disable --quiet
+    ```
+    
+    <Tip>
+    objection combines multiple bypass techniques for broad compatibility.
+    </Tip>
+  </Tab>
+  
+  <Tab title="Binary Patching">
+    Permanent SSL bypass:
+    
+    <Steps>
+      <Step title="Find pinning code">
+        Use Hopper/Ghidra to locate:
+        - SecTrustEvaluate calls
+        - Certificate validation methods
+        - TrustKit/AFNetworking usage
+      </Step>
+      
+      <Step title="Patch instructions">
+        ```asm
+        ; Original:
+        bl     SecTrustEvaluate
+        cbnz   w0, loc_fail  ; Branch if failed
+        
+        ; Patched:
+        bl     SecTrustEvaluate
+        nop                  ; Remove conditional branch
+        ```
+        
+        Or simply return success:
+        ```asm
+        ; Replace entire validation method:
+        mov    w0, #1        ; Return YES/true
+        ret
+        ```
+      </Step>
+      
+      <Step title="Save and resign">
+        ```bash
+        # Save patched binary
+        # Resign with own certificate
+        codesign -f -s "iPhone Developer" MyApp.app
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+### Advanced Pinning Bypass
+
+<CardGroup cols={2}>
+  <Card title="Custom Pinning Logic" icon="puzzle-piece">
+    Some apps implement custom validation:
+    
+    ```javascript
+    // Find and hook custom validator
+    var methods = ObjC.classes.CustomSSLValidator.$ownMethods;
+    methods.forEach(function(method) {
+        if (method.includes('validate') || method.includes('verify')) {
+            Interceptor.attach(
+                ObjC.classes.CustomSSLValidator[method].implementation,
+                {
+                    onLeave: function(retval) {
+                        console.log('[+] Hooked: ' + method);
+                        retval.replace(1);
+                    }
+                }
+            );
+        }
+    });
+    ```
+  </Card>
+  
+  <Card title="Flutter Apps" icon="mobile">
+    Flutter apps require different approach:
+    
+    ```bash
+    # Use reFlutter for automatic bypass
+    pip install reflutter
+    
+    # Patch Flutter engine
+    reflutter app.ipa
+    
+    # Install patched IPA
+    # SSL pinning bypassed in Flutter layer
+    ```
+  </Card>
+  
+  <Card title="React Native" icon="react">
+    Hook React Native networking:
+    
+    ```javascript
+    if (ObjC.classes.RCTHTTPRequestHandler) {
+        Interceptor.attach(
+            ObjC.classes.RCTHTTPRequestHandler['- sendRequest:withDelegate:'].implementation,
+            {
+                onEnter: function(args) {
+                    console.log('[+] RN request intercepted');
+                    // Modify request as needed
+                }
+            }
+        );
+    }
+    ```
+  </Card>
+  
+  <Card title="Xamarin Apps" icon="x">
+    Xamarin uses Mono runtime:
+    
+    ```javascript
+    // Hook .NET ServicePointManager
+    var ServerCertificateValidationCallback = /* find callback */;
+    Interceptor.replace(ServerCertificateValidationCallback, 
+        new NativeCallback(function() {
+            return 1;  // Always valid
+        }, 'int', [])
+    );
+    ```
+  </Card>
+</CardGroup>
+
+## Analyzing API Communication
+
+### Request Analysis
+
+<Tabs>
+  <Tab title="Authentication Mechanisms">
+    Identify how the app authenticates:
+    
+    <AccordionGroup>
+      <Accordion title="Bearer Tokens">
+        ```http
+        GET /api/user/profile HTTP/1.1
+        Host: api.example.com
+        Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        ```
+        
+        - Decode JWT tokens at jwt.io
+        - Check expiration and claims
+        - Test token reuse and refresh
+      </Accordion>
+      
+      <Accordion title="API Keys">
+        ```http
+        GET /api/data HTTP/1.1
+        Host: api.example.com
+        X-API-Key: abc123def456ghi789
+        ```
+        
+        - Extract from requests
+        - Check if static or per-user
+        - Test without key for validation
+      </Accordion>
+      
+      <Accordion title="OAuth 2.0">
+        ```http
+        POST /oauth/token HTTP/1.1
+        
+        grant_type=authorization_code&
+        code=AUTH_CODE&
+        client_id=CLIENT_ID&
+        client_secret=CLIENT_SECRET
+        ```
+        
+        - Map OAuth flow
+        - Extract client credentials
+        - Test PKCE implementation
+      </Accordion>
+      
+      <Accordion title="Session Cookies">
+        ```http
+        GET /api/data HTTP/1.1
+        Cookie: sessionid=abc123; csrftoken=xyz789
+        ```
+        
+        - Check secure/httponly flags
+        - Test session fixation
+        - Verify CSRF protection
+      </Accordion>
+    </AccordionGroup>
+  </Tab>
+  
+  <Tab title="Endpoint Discovery">
+    Map all API endpoints:
+    
+    ```javascript
+    // Frida script to log all URLs
+    var NSURLSession = ObjC.classes.NSURLSession;
+    var NSURLRequest = ObjC.classes.NSURLRequest;
+    
+    var endpoints = {};
+    
+    Interceptor.attach(
+        ObjC.classes.NSURLSessionTask['- resume'].implementation,
+        {
+            onEnter: function(args) {
+                var task = ObjC.Object(args[0]);
+                var request = task.currentRequest();
+                var url = request.URL().absoluteString().toString();
+                var method = request.HTTPMethod().toString();
+                
+                var key = method + ' ' + url;
+                if (!endpoints[key]) {
+                    endpoints[key] = 0;
+                    console.log('[+] New endpoint: ' + key);
+                }
+                endpoints[key]++;
+            }
+        }
+    );
+    
+    // Periodically dump summary
+    setInterval(function() {
+        console.log('\n[+] Endpoint Summary:');
+        Object.keys(endpoints).sort().forEach(function(key) {
+            console.log('    ' + endpoints[key] + 'x - ' + key);
+        });
+    }, 60000);
+    ```
+  </Tab>
+  
+  <Tab title="Parameter Analysis">
+    Understand request parameters:
+    
+    ```python
+    # Burp Suite extension or script
+    # Analyze parameter patterns
+    
+    import json
+    
+    def analyze_request(request):
+        # Parse query params
+        # Parse JSON body
+        # Extract headers
+        
+        params = {
+            'user_id': 'integer',
+            'auth_token': 'jwt',
+            'timestamp': 'unix_epoch',
+            'signature': 'hmac_sha256'
+        }
+        
+        # Test for:
+        # - Required vs optional
+        # - Type validation
+        # - Authorization checks
+        # - Injection vulnerabilities
+    ```
+  </Tab>
+</Tabs>
+
+### Response Analysis
+
+<CodeGroup>
+```json Success Response
+{
+  "status": "success",
+  "data": {
+    "user_id": 12345,
+    "email": "user@example.com",
+    "premium": true,
+    "subscription_expires": "2025-12-31"
+  },
+  "meta": {
+    "api_version": "2.1",
+    "timestamp": 1709481600
+  }
+}
+```
+
+```json Error Response  
+{
+  "status": "error",
+  "error": {
+    "code": 401,
+    "message": "Invalid authentication token",
+    "details": "Token expired at 2025-03-01T12:00:00Z"
+  }
+}
+```
+
+```json Debugging Info
+{
+  "status": "success",
+  "data": {...},
+  "_debug": {
+    "query_time": "0.043s",
+    "server": "api-prod-03",
+    "cache_hit": false
+  }
+}
+```
+</CodeGroup>
+
+## Man-in-the-Middle Techniques
+
+### Request Modification
+
+<Tabs>
+  <Tab title="Burp Suite Proxy">
+    <Steps>
+      <Step title="Intercept request">
+        1. Proxy > Intercept > Intercept is on
+        2. Trigger request in app
+        3. Request appears in Burp
+      </Step>
+      
+      <Step title="Modify parameters">
+        ```http
+        # Original
+        POST /api/purchase
+        {"item_id": 123, "price": 9.99}
+        
+        # Modified
+        POST /api/purchase  
+        {"item_id": 123, "price": 0.01}
+        ```
+      </Step>
+      
+      <Step title="Forward request">
+        Click "Forward" to send modified request
+      </Step>
+    </Steps>
+    
+    <Tip>
+    Use Match/Replace rules for automatic modification.
+    </Tip>
+  </Tab>
+  
+  <Tab title="Automated Testing">
+    ```python
+    # mitmproxy script
+    from mitmproxy import http
+    
+    def request(flow: http.HTTPFlow) -> None:
+        # Modify authentication
+        if "Authorization" in flow.request.headers:
+            flow.request.headers["Authorization"] = "Bearer ATTACKER_TOKEN"
+        
+        # Change user ID in JSON
+        if flow.request.method == "POST" and "/api/" in flow.request.path:
+            try:
+                data = flow.request.json()
+                if "user_id" in data:
+                    data["user_id"] = 99999  # Different user
+                    flow.request.text = json.dumps(data)
+            except:
+                pass
+    
+    def response(flow: http.HTTPFlow) -> None:
+        # Modify responses
+        if "/api/user/status" in flow.request.path:
+            try:
+                data = flow.response.json()
+                data["premium"] = True  # Force premium
+                flow.response.text = json.dumps(data)
+            except:
+                pass
+    ```
+    
+    Run with:
+    ```bash
+    mitmproxy -s modify.py
+    ```
+  </Tab>
+  
+  <Tab title="Frida-based MITM">
+    ```javascript
+    // Modify requests before they're sent
+    Interceptor.attach(
+        ObjC.classes.NSMutableURLRequest['- setValue:forHTTPHeaderField:'].implementation,
+        {
+            onEnter: function(args) {
+                var field = ObjC.Object(args[3]).toString();
+                
+                if (field === "Authorization") {
+                    var newToken = ObjC.classes.NSString
+                        .stringWithString_("Bearer CUSTOM_TOKEN");
+                    args[2] = newToken;
+                    console.log('[+] Modified Authorization header');
+                }
+            }
+        }
+    );
+    
+    // Modify JSON bodies
+    Interceptor.attach(
+        ObjC.classes.NSMutableURLRequest['- setHTTPBody:'].implementation,
+        {
+            onEnter: function(args) {
+                var bodyData = ObjC.Object(args[2]);
+                var bodyStr = ObjC.classes.NSString.alloc()
+                    .initWithData_encoding_(bodyData, 4).toString();
+                
+                try {
+                    var json = JSON.parse(bodyStr);
+                    json.premium = true;  // Modify field
+                    
+                    var newStr = JSON.stringify(json);
+                    var newData = ObjC.classes.NSString
+                        .stringWithString_(newStr)
+                        .dataUsingEncoding_(4);
+                    
+                    args[2] = newData;
+                    console.log('[+] Modified request body');
+                } catch(e) {}
+            }
+        }
+    );
+    ```
+  </Tab>
+</Tabs>
+
+### Attack Scenarios
+
+<AccordionGroup>
+  <Accordion title="Price Manipulation" icon="dollar-sign">
+    Test if server validates prices:
+    
+    ```http
+    POST /api/purchase HTTP/1.1
+    
+    {
+      "item_id": 123,
+      "quantity": 1,
+      "price": 0.01,     // Modified from 99.99
+      "currency": "USD"
+    }
+    ```
+    
+    <Warning>
+    Only test on apps you're authorized to test. This is often illegal otherwise.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Authorization Bypass" icon="user-lock">
+    Test Insecure Direct Object References (IDOR):
+    
+    ```http
+    # Access another user's data
+    GET /api/user/12345/private-data HTTP/1.1
+    
+    # Try different user ID
+    GET /api/user/99999/private-data HTTP/1.1
+    ```
+  </Accordion>
+  
+  <Accordion title="Rate Limiting" icon="gauge">
+    Test for rate limiting:
+    
+    ```python
+    import requests
+    
+    # Send 1000 requests
+    for i in range(1000):
+        resp = requests.post('https://api.example.com/login',
+            json={'username': 'test', 'password': f'pass{i}'}
+        )
+        print(f"Request {i}: {resp.status_code}")
+    ```
+  </Accordion>
+  
+  <Accordion title="Parameter Pollution" icon="clone">
+    Test duplicate parameter handling:
+    
+    ```http
+    POST /api/transfer HTTP/1.1
+    
+    amount=1.00&amount=1000.00&recipient=attacker
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Tools and Automation
+
+<CardGroup cols={2}>
+  <Card title="Proxyman" icon="binoculars" href="https://proxyman.io">
+    Modern macOS proxy with iOS pairing
+  </Card>
+  
+  <Card title="Burp Suite" icon="shield" href="https://portswigger.net/burp">
+    Industry-standard security testing proxy
+  </Card>
+  
+  <Card title="mitmproxy" icon="terminal" href="https://mitmproxy.org">
+    Scriptable MITM proxy
+  </Card>
+  
+  <Card title="Wireshark" icon="network-wired" href="https://wireshark.org">
+    Network protocol analyzer
+  </Card>
+  
+  <Card title="Postman" icon="paper-plane" href="https://postman.com">
+    API testing and documentation
+  </Card>
+  
+  <Card title="HTTPToolkit" icon="wrench" href="https://httptoolkit.tech">
+    Modern HTTP debugging
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Document Everything">
+    - Keep detailed logs of all requests/responses
+    - Screenshot important findings
+    - Export traffic captures for review
+    - Map complete API surface
+  </Step>
+  
+  <Step title="Test Systematically">
+    - Start with passive observation
+    - Identify authentication mechanism
+    - Map all endpoints
+    - Test authorization boundaries
+    - Check input validation
+  </Step>
+  
+  <Step title="Stay Legal">
+    - Only test apps you're authorized to test
+    - Respect terms of service
+    - Don't access others' data
+    - Report vulnerabilities responsibly
+  </Step>
+  
+  <Step title="Verify Findings">
+    - Reproduce issues multiple times
+    - Test on different accounts
+    - Confirm with direct API calls
+    - Document exact reproduction steps
+  </Step>
+</Steps>
+
+<Check>
+**Network analysis complete when you have:**
+- Successfully intercepted all traffic
+- Bypassed SSL pinning if present
+- Mapped complete API structure
+- Identified authentication mechanisms
+- Documented potential vulnerabilities
+- Tested key security controls
+</Check>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="SSL Kill Switch 2" icon="power-off" href="https://github.com/nabla-c0d3/ssl-kill-switch2">
+    Jailbreak tweak for SSL bypass
+  </Card>
+  
+  <Card title="objection" icon="syringe" href="https://github.com/sensepost/objection">
+    Runtime mobile exploration toolkit
+  </Card>
+  
+  <Card title="Frida CodeShare" icon="share" href="https://codeshare.frida.re">
+    Community scripts including SSL bypass
+  </Card>
+  
+  <Card title="OWASP Mobile" icon="mobile" href="https://owasp.org/www-project-mobile-security-testing-guide/">
+    Mobile security testing guide
+  </Card>
+</CardGroup>

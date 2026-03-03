@@ -1,0 +1,185 @@
+---
+title: iOS Reverse Engineering Reference
+description: A comprehensive guide to reverse engineering iOS applications, from fundamentals to advanced techniques
+---
+
+<img
+  className="block dark:hidden"
+  src="https://img.shields.io/github/stars/LaurieWired/iOS_Reverse_Engineering"
+  alt="GitHub Stars"
+/>
+<img
+  className="hidden dark:block"
+  src="https://img.shields.io/github/stars/LaurieWired/iOS_Reverse_Engineering"
+  alt="GitHub Stars"
+/>
+
+## Welcome to iOS Reverse Engineering
+
+Dive deep into the heart of iOS with this comprehensive guide to reverse engineering. From beginners to experts, there's something for everyone. This reference provides practical tools, scripts, and techniques to analyze, understand, and dissect iOS applications.
+
+<CardGroup cols={2}>
+  <Card
+    title="Fundamentals"
+    icon="book"
+    href="/prerequisites"
+  >
+    Learn the essential knowledge and skills needed before starting your iOS reverse engineering journey
+  </Card>
+  <Card
+    title="Setup & Tools"
+    icon="wrench"
+    href="/setup"
+  >
+    Get your environment ready with Ghidra, Swift demanglers, and other essential tools
+  </Card>
+  <Card
+    title="Ghidra Scripts"
+    icon="code"
+    href="#ghidra-scripts"
+  >
+    Automate your workflow with custom Python scripts for Swift demangling and swizzling detection
+  </Card>
+  <Card
+    title="Example IPAs"
+    icon="mobile"
+    href="#example-applications"
+  >
+    Practice with real-world examples showcasing various obfuscation techniques
+  </Card>
+</CardGroup>
+
+## What You'll Learn
+
+This reference covers the complete iOS reverse engineering workflow:
+
+<AccordionGroup>
+  <Accordion title="Binary Analysis" icon="binary">
+    - Understanding Mach-O file format
+    - Analyzing Swift and Objective-C binaries
+    - Working with stripped symbols and obfuscated code
+    - Identifying key sections in iOS binaries
+  </Accordion>
+
+  <Accordion title="Decompilation & Deobfuscation" icon="magnifying-glass">
+    - Using Ghidra for iOS app analysis
+    - Demangling Swift function names
+    - Detecting and analyzing method swizzling
+    - Understanding control flow flattening
+  </Accordion>
+
+  <Accordion title="Runtime Analysis" icon="play">
+    - Detecting runtime manipulation techniques
+    - Identifying swizzled methods
+    - Understanding dynamic code modification
+    - Analyzing app behavior at runtime
+  </Accordion>
+
+  <Accordion title="Automation" icon="robot">
+    - Custom Ghidra scripting with Python
+    - Automating symbol restoration
+    - Batch processing iOS binaries
+    - Creating reusable analysis workflows
+  </Accordion>
+</AccordionGroup>
+
+## Key Features
+
+<CardGroup cols={3}>
+  <Card title="Custom Ghidra Scripts" icon="file-code">
+    Python scripts specifically designed for iOS reverse engineering workflows
+  </Card>
+  <Card title="Real Examples" icon="flask">
+    Actual IPA files demonstrating common obfuscation techniques
+  </Card>
+  <Card title="Swift Support" icon="bolt">
+    Specialized tools for demangling and analyzing Swift code
+  </Card>
+  <Card title="Detection Tools" icon="shield">
+    Scripts to identify swizzling and other runtime manipulation
+  </Card>
+  <Card title="Open Source" icon="code-branch">
+    All scripts and examples are freely available on GitHub
+  </Card>
+  <Card title="Community Driven" icon="users">
+    Continuously updated with new techniques and improvements
+  </Card>
+</CardGroup>
+
+## Ghidra Scripts
+
+This repository includes powerful Ghidra scripts to accelerate your iOS reverse engineering workflow:
+
+### Swift Name Demangler
+
+Automatically demangles Swift class, function, and variable names in your Ghidra project. This script:
+
+- Renames functions with human-readable Swift names
+- Processes labels and symbols throughout the binary
+- Preserves original mangled names in comments
+- Works on both macOS and Linux
+
+<Note>
+  The Swift Name Demangler requires Swift to be installed on your machine and may take some time for larger applications.
+</Note>
+
+### Swizzling Detector
+
+Detects whether an iOS app uses method swizzling and prints all references. This script identifies:
+
+- `method_exchangeImplementations` calls
+- `class_getInstanceMethod` usage
+- `class_getClassMethod` usage  
+- `method_setImplementation` calls
+
+The script will show you exactly where swizzling occurs and all references to these methods, helping you understand how the app modifies its runtime behavior.
+
+## Example Applications
+
+Practice your skills with real IPA files showcasing various obfuscation techniques:
+
+<CardGroup cols={3}>
+  <Card title="No Tampering" icon="check">
+    Baseline application without obfuscation for comparison
+  </Card>
+  <Card title="Objective Swizzling" icon="shuffle">
+    Demonstrates Objective-C method swizzling techniques
+  </Card>
+  <Card title="Control Flow Flattening" icon="diagram-project">
+    Shows control flow obfuscation to complicate analysis
+  </Card>
+</CardGroup>
+
+<Warning>
+  These example applications are for educational purposes only. Always ensure you have proper authorization before reverse engineering any iOS application.
+</Warning>
+
+## Get Started
+
+<Steps>
+  <Step title="Check Prerequisites">
+    Review the [prerequisites](/prerequisites) to ensure you have the necessary background knowledge
+  </Step>
+  <Step title="Setup Your Environment">
+    Follow the [setup guide](/setup) to install Ghidra and configure your tools
+  </Step>
+  <Step title="Start Analyzing">
+    Load an example IPA into Ghidra and run the provided scripts
+  </Step>
+</Steps>
+
+## Community & Contributions
+
+Join the community and help evolve the landscape of iOS Reverse Engineering. This repository is continuously updated with new information, scripts, and techniques.
+
+<Card title="Explore the Wiki" icon="book-open" href="https://github.com/LaurieWired/iOS_Reverse_Engineering/wiki/iOS-RE-Reference">
+  The comprehensive iOS RE Wiki contains detailed guides and information for kickstarting your iOS reverse engineering journey
+</Card>
+
+## About This Project
+
+Created by [@lauriewired](https://twitter.com/lauriewired), this reference aims to make iOS reverse engineering more accessible to security researchers, developers, and enthusiasts.
+
+![GitHub Stars](https://img.shields.io/github/stars/LaurieWired/iOS_Reverse_Engineering)
+![GitHub Forks](https://img.shields.io/github/forks/LaurieWired/iOS_Reverse_Engineering)
+![GitHub Contributors](https://img.shields.io/github/contributors/LaurieWired/iOS_Reverse_Engineering)

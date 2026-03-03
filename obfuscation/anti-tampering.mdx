@@ -1,0 +1,729 @@
+---
+title: "Anti-Tampering Techniques"
+description: "Understanding and bypassing runtime protection mechanisms in iOS applications"
+icon: "shield-check"
+---
+
+Anti-tampering techniques are defensive mechanisms that detect when an application is running in a compromised environment or being analyzed, then take action to prevent further execution or analysis.
+
+## Overview
+
+Anti-tampering protections typically fall into three categories:
+
+<CardGroup cols={3}>
+  <Card title="Environment Detection" icon="mobile">
+    Detecting jailbroken devices and modified system components.
+  </Card>
+
+  <Card title="Debugger Detection" icon="bug">
+    Identifying when the app is being debugged or instrumented.
+  </Card>
+
+  <Card title="Integrity Checks" icon="check-double">
+    Verifying that the application code hasn't been modified.
+  </Card>
+</CardGroup>
+
+## Jailbreak Detection
+
+Jailbreak detection attempts to identify if the device has been modified to allow root access and unsigned code execution.
+
+### Common Detection Methods
+
+<Tabs>
+  <Tab title="File System Checks">
+    Looking for files that only exist on jailbroken devices:
+    
+    ```swift
+    func isJailbroken() -> Bool {
+        let jailbreakPaths = [
+            "/Applications/Cydia.app",
+            "/Applications/blackra1n.app",
+            "/Applications/FakeCarrier.app",
+            "/Applications/Icy.app",
+            "/Applications/IntelliScreen.app",
+            "/Applications/MxTube.app",
+            "/Applications/RockApp.app",
+            "/Applications/SBSettings.app",
+            "/Applications/WinterBoard.app",
+            "/Library/MobileSubstrate/MobileSubstrate.dylib",
+            "/Library/MobileSubstrate/DynamicLibraries/",
+            "/usr/sbin/sshd",
+            "/usr/bin/sshd",
+            "/usr/libexec/sftp-server",
+            "/usr/libexec/ssh-keysign",
+            "/bin/bash",
+            "/bin/sh",
+            "/etc/apt",
+            "/private/var/lib/apt",
+            "/private/var/lib/cydia",
+            "/private/var/stash"
+        ]
+        
+        for path in jailbreakPaths {
+            if FileManager.default.fileExists(atPath: path) {
+                return true
+            }
+        }
+        
+        return false
+    }
+    ```
+  </Tab>
+
+  <Tab title="Privilege Checks">
+    Attempting operations that should fail on non-jailbroken devices:
+    
+    ```swift
+    func canWriteToRestrictedPath() -> Bool {
+        let testString = "jailbreak test"
+        let path = "/private/jailbreak_test.txt"
+        
+        do {
+            try testString.write(toFile: path, 
+                                atomically: true, 
+                                encoding: .utf8)
+            try FileManager.default.removeItem(atPath: path)
+            return true  // Should not succeed on stock iOS
+        } catch {
+            return false
+        }
+    }
+    
+    func checkFork() -> Bool {
+        let pid = fork()
+        if pid >= 0 {
+            // fork succeeded - jailbroken
+            if pid > 0 {
+                kill(pid, SIGTERM)
+            }
+            return true
+        }
+        return false
+    }
+    ```
+  </Tab>
+
+  <Tab title="Symbolic Link Checks">
+    Checking for redirected system directories:
+    
+    ```swift
+    func checkSymbolicLinks() -> Bool {
+        let paths = ["/Applications", "/usr/share", "/Library/Ringtones"]
+        
+        for path in paths {
+            do {
+                let attributes = try FileManager.default
+                    .attributesOfItem(atPath: path)
+                
+                if let type = attributes[.type] as? FileAttributeType,
+                   type == .typeSymbolicLink {
+                    return true  // Symlink detected
+                }
+            } catch {
+                continue
+            }
+        }
+        
+        return false
+    }
+    ```
+  </Tab>
+
+  <Tab title="dyld Checks">
+    Detecting injected dynamic libraries:
+    
+    ```swift
+    func checkDyldEnvironment() -> Bool {
+        var count: UInt32 = 0
+        let imageCount = _dyld_image_count()
+        
+        for i in 0..<imageCount {
+            if let imageName = _dyld_get_image_name(i) {
+                let name = String(cString: imageName)
+                
+                // Check for suspicious libraries
+                if name.contains("MobileSubstrate") ||
+                   name.contains("substrate") ||
+                   name.contains("cycript") ||
+                   name.contains("FridaGadget") {
+                    return true
+                }
+            }
+        }
+        
+        return false
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Advanced Jailbreak Detection
+
+<AccordionGroup>
+  <Tab title="System Call Inspection">
+    Checking for modified system call tables:
+    
+    ```objective-c
+    #import <sys/sysctl.h>
+    
+    BOOL isJailbrokenViaKernelCheck() {
+        int mib[4];
+        struct kinfo_proc info;
+        size_t size = sizeof(info);
+        
+        info.kp_proc.p_flag = 0;
+        mib[0] = CTL_KERN;
+        mib[1] = KERN_PROC;
+        mib[2] = KERN_PROC_PID;
+        mib[3] = getpid();
+        
+        sysctl(mib, 4, &info, &size, NULL, 0);
+        
+        // P_TRACED flag indicates debugging/modification
+        return (info.kp_proc.p_flag & P_TRACED) != 0;
+    }
+    ```
+  </Tab>
+
+  <Tab title="Integrity Verification">
+    Verifying system file checksums:
+    
+    ```swift
+    import CryptoKit
+    
+    func verifySystemIntegrity() -> Bool {
+        let criticalFiles: [String: String] = [
+            "/System/Library/CoreServices/SpringBoard.app/SpringBoard":
+                "expected_hash_here",
+            "/usr/lib/libSystem.B.dylib":
+                "expected_hash_here"
+        ]
+        
+        for (path, expectedHash) in criticalFiles {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+                return false
+            }
+            
+            let hash = SHA256.hash(data: data)
+            let hashString = hash.compactMap { 
+                String(format: "%02x", $0) 
+            }.joined()
+            
+            if hashString != expectedHash {
+                return false  // File modified
+            }
+        }
+        
+        return true
+    }
+    ```
+  </Tab>
+</AccordionGroup>
+
+## Debugger Detection
+
+Detecting when the application is being debugged allows it to exit or alter behavior.
+
+### Detection Techniques
+
+<CodeGroup>
+```c sysctl P_TRACED Check
+#include <sys/sysctl.h>
+#include <unistd.h>
+
+BOOL isBeingDebugged() {
+    int mib[4];
+    struct kinfo_proc info;
+    size_t size = sizeof(info);
+    
+    info.kp_proc.p_flag = 0;
+    mib[0] = CTL_KERN;
+    mib[1] = KERN_PROC;
+    mib[2] = KERN_PROC_PID;
+    mib[3] = getpid();
+    
+    if (sysctl(mib, 4, &info, &size, NULL, 0) == -1) {
+        return NO;
+    }
+    
+    return (info.kp_proc.p_flag & P_TRACED) != 0;
+}
+```
+
+```c ptrace Anti-Debug
+#include <sys/ptrace.h>
+#include <sys/types.h>
+
+void anti_debug() {
+    // Calling ptrace with PT_DENY_ATTACH prevents debuggers
+    ptrace(PT_DENY_ATTACH, 0, 0, 0);
+}
+
+// In constructor before main()
+__attribute__((constructor))
+static void setupAntiDebug() {
+    anti_debug();
+}
+```
+
+```swift Exception Port Check
+import Darwin.Mach
+
+func checkExceptionPorts() -> Bool {
+    var exceptionPort: mach_port_t = 0
+    var exceptionPortCount: mach_msg_type_number_t = 0
+    var masks = [exception_mask_t]()
+    var ports = [mach_port_t]()
+    var behaviors = [exception_behavior_t]()
+    var flavors = [thread_state_flavor_t]()
+    
+    let result = task_get_exception_ports(
+        mach_task_self_,
+        EXC_MASK_ALL,
+        &masks,
+        &exceptionPortCount,
+        &ports,
+        &behaviors,
+        &flavors
+    )
+    
+    if result == KERN_SUCCESS {
+        // Debuggers modify exception ports
+        return exceptionPortCount > 0
+    }
+    
+    return false
+}
+```
+</CodeGroup>
+
+### Continuous Monitoring
+
+<Info>
+  Anti-debugging checks should run continuously, not just at startup, to detect debuggers attached after launch.
+</Info>
+
+```swift
+class DebugDetector {
+    private var timer: Timer?
+    
+    func startMonitoring() {
+        timer = Timer.scheduledTimer(
+            withTimeInterval: 1.0,
+            repeats: true
+        ) { [weak self] _ in
+            self?.performChecks()
+        }
+    }
+    
+    private func performChecks() {
+        if isBeingDebugged() || checkExceptionPorts() {
+            handleTamperingDetected()
+        }
+    }
+    
+    private func handleTamperingDetected() {
+        // Don't obviously crash - that's easy to bypass
+        // Instead, corrupt data or alter behavior subtly
+        corruptCriticalData()
+        
+        // Or delay and exit
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            exit(0)
+        }
+    }
+}
+```
+
+## Integrity Checks
+
+Verifying that the application binary hasn't been modified.
+
+<Tabs>
+  <Tab title="Code Signature Validation">
+    ```objective-c
+    #import <Security/Security.h>
+    
+    BOOL verifyCodeSignature() {
+        SecStaticCodeRef staticCode = NULL;
+        OSStatus status;
+        
+        // Get reference to current binary
+        status = SecStaticCodeCreateWithPath(
+            (__bridge CFURLRef)[NSBundle mainBundle].bundleURL,
+            kSecCSDefaultFlags,
+            &staticCode
+        );
+        
+        if (status != errSecSuccess) {
+            return NO;
+        }
+        
+        // Verify signature
+        status = SecStaticCodeCheckValidity(
+            staticCode,
+            kSecCSDefaultFlags,
+            NULL
+        );
+        
+        CFRelease(staticCode);
+        return status == errSecSuccess;
+    }
+    ```
+  </Tab>
+
+  <Tab title="Checksum Validation">
+    ```swift
+    import CryptoKit
+    
+    func verifyBinaryIntegrity() -> Bool {
+        guard let executableURL = Bundle.main.executableURL,
+              let data = try? Data(contentsOf: executableURL) else {
+            return false
+        }
+        
+        let hash = SHA256.hash(data: data)
+        let hashString = hash.compactMap { 
+            String(format: "%02x", $0) 
+        }.joined()
+        
+        // Compare with known good hash
+        let expectedHash = "your_expected_hash_here"
+        return hashString == expectedHash
+    }
+    ```
+    
+    <Warning>
+      Store the expected hash in an obfuscated form to prevent simple patching.
+    </Warning>
+  </Tab>
+
+  <Tab title="Runtime Memory Checks">
+    ```c
+    #include <mach-o/dyld.h>
+    #include <mach/mach.h>
+    
+    BOOL checkForMemoryTampering() {
+        // Check if TEXT segment is writable (should be read-only)
+        const struct mach_header *header = _dyld_get_image_header(0);
+        
+        vm_address_t address = (vm_address_t)header;
+        vm_size_t size = 0;
+        vm_region_basic_info_data_64_t info;
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object_name;
+        
+        kern_return_t ret = vm_region_64(
+            mach_task_self(),
+            &address,
+            &size,
+            VM_REGION_BASIC_INFO_64,
+            (vm_region_info_t)&info,
+            &count,
+            &object_name
+        );
+        
+        if (ret == KERN_SUCCESS) {
+            // TEXT should not be writable
+            if (info.protection & VM_PROT_WRITE) {
+                return YES;  // Tampering detected
+            }
+        }
+        
+        return NO;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Example Analysis: NoTampering.ipa
+
+<Note>
+  The example file is located at:
+  `/home/daytona/workspace/source/ObfuscatedAppExamples/NoTampering.ipa`
+</Note>
+
+### Extracting and Analyzing
+
+<Steps>
+  <Step title="Extract the IPA">
+    ```bash
+    unzip NoTampering.ipa -d NoTampering
+    cd NoTampering/Payload/*.app
+    ```
+  </Step>
+
+  <Step title="Identify Protection Mechanisms">
+    ```bash
+    # Check for anti-debug symbols
+    nm NoTampering | grep -i "debug\|ptrace\|sysctl"
+    
+    # Look for jailbreak detection strings
+    strings NoTampering | grep -i "cydia\|substrate\|jailbreak"
+    
+    # Examine imports
+    otool -L NoTampering
+    ```
+  </Step>
+
+  <Step title="Static Analysis in Hopper">
+    - Search for `ptrace` calls
+    - Locate `sysctl` with `P_TRACED` checks
+    - Find file existence checks for jailbreak paths
+    - Identify integrity verification routines
+  </Step>
+
+  <Step title="Dynamic Analysis Strategy">
+    Plan how to bypass detected protections using Frida or patches.
+  </Step>
+</Steps>
+
+### Bypassing with Frida
+
+<CodeGroup>
+```javascript Bypass ptrace
+// Hook ptrace to prevent PT_DENY_ATTACH
+var ptrace_ptr = Module.findExportByName(null, "ptrace");
+if (ptrace_ptr) {
+    Interceptor.attach(ptrace_ptr, {
+        onEnter: function(args) {
+            var request = args[0].toInt32();
+            if (request === 31) {  // PT_DENY_ATTACH
+                console.log("[*] Blocked PT_DENY_ATTACH");
+                args[0] = ptr(0);  // Change to invalid request
+            }
+        }
+    });
+}
+```
+
+```javascript Bypass sysctl
+// Hook sysctl to hide debugger
+var sysctl_ptr = Module.findExportByName(null, "sysctl");
+if (sysctl_ptr) {
+    Interceptor.attach(sysctl_ptr, {
+        onLeave: function(retval) {
+            var info = ptr(this.context.r1);  // kinfo_proc struct
+            var flags = info.add(0x20).readU32();  // p_flag offset
+            
+            if (flags & 0x800) {  // P_TRACED flag
+                console.log("[*] Hiding P_TRACED flag");
+                info.add(0x20).writeU32(flags & ~0x800);
+            }
+        }
+    });
+}
+```
+
+```javascript Bypass File Checks
+// Hook file existence checks
+var fileExists = ObjC.classes.NSFileManager['- fileExistsAtPath:'];
+Interceptor.attach(fileExists.implementation, {
+    onEnter: function(args) {
+        this.path = ObjC.Object(args[2]).toString();
+    },
+    onLeave: function(retval) {
+        var suspicious = [
+            "Cydia", "substrate", "bash", "ssh"
+        ];
+        
+        for (var i = 0; i < suspicious.length; i++) {
+            if (this.path.includes(suspicious[i])) {
+                console.log("[*] Hiding: " + this.path);
+                retval.replace(ptr(0));  // Return NO
+                break;
+            }
+        }
+    }
+});
+```
+
+```javascript Bypass Integrity Checks
+// Hook integrity verification
+Interceptor.attach(Module.findExportByName(null, "CC_SHA256"), {
+    onEnter: function(args) {
+        this.data = args[0];
+        this.len = args[1].toInt32();
+        this.hash = args[2];
+    },
+    onLeave: function(retval) {
+        // Replace hash with expected value
+        var expectedHash = [/* known good hash bytes */];
+        Memory.writeByteArray(this.hash, expectedHash);
+        console.log("[*] Replaced integrity hash");
+    }
+});
+```
+</CodeGroup>
+
+## Comprehensive Bypass Script
+
+```javascript
+// all-in-one-bypass.js
+
+setTimeout(function() {
+    console.log("[*] Starting anti-tampering bypass...");
+    
+    // 1. Bypass ptrace
+    bypassPtrace();
+    
+    // 2. Bypass sysctl
+    bypassSysctl();
+    
+    // 3. Bypass file checks
+    bypassFileChecks();
+    
+    // 4. Bypass dyld checks
+    bypassDyldChecks();
+    
+    // 5. Bypass integrity checks
+    bypassIntegrityChecks();
+    
+    console.log("[*] Bypass complete!");
+}, 0);
+
+function bypassPtrace() {
+    var ptrace_ptr = Module.findExportByName(null, "ptrace");
+    if (ptrace_ptr) {
+        Interceptor.attach(ptrace_ptr, {
+            onEnter: function(args) {
+                if (args[0].toInt32() === 31) {
+                    args[0] = ptr(0);
+                }
+            }
+        });
+        console.log("[+] ptrace bypass installed");
+    }
+}
+
+function bypassSysctl() {
+    var sysctl_ptr = Module.findExportByName(null, "sysctl");
+    if (sysctl_ptr) {
+        Interceptor.attach(sysctl_ptr, {
+            onLeave: function(retval) {
+                var info = ptr(this.context.r1);
+                var flags = info.add(0x20).readU32();
+                if (flags & 0x800) {
+                    info.add(0x20).writeU32(flags & ~0x800);
+                }
+            }
+        });
+        console.log("[+] sysctl bypass installed");
+    }
+}
+
+function bypassFileChecks() {
+    var fileExists = ObjC.classes.NSFileManager['- fileExistsAtPath:'];
+    Interceptor.attach(fileExists.implementation, {
+        onEnter: function(args) {
+            this.path = ObjC.Object(args[2]).toString();
+        },
+        onLeave: function(retval) {
+            var suspicious = ["Cydia", "substrate", "bash", "ssh", "apt"];
+            for (var s of suspicious) {
+                if (this.path.includes(s)) {
+                    retval.replace(ptr(0));
+                    return;
+                }
+            }
+        }
+    });
+    console.log("[+] File check bypass installed");
+}
+
+function bypassDyldChecks() {
+    // Override dyld image count to hide injected libraries
+    var dyld_image_count = Module.findExportByName(null, "_dyld_image_count");
+    if (dyld_image_count) {
+        Interceptor.replace(dyld_image_count, new NativeCallback(
+            function() { return 10; },  // Return fixed small number
+            'uint32', []
+        ));
+        console.log("[+] dyld bypass installed");
+    }
+}
+
+function bypassIntegrityChecks() {
+    // Hook common crypto functions used for checksums
+    var sha256 = Module.findExportByName(null, "CC_SHA256");
+    if (sha256) {
+        Interceptor.attach(sha256, {
+            onLeave: function(retval) {
+                // Could replace with known good hash if needed
+            }
+        });
+        console.log("[+] Integrity check bypass installed");
+    }
+}
+```
+
+### Running the Bypass
+
+```bash
+# Attach to running app
+frida -U -f com.example.notampering -l all-in-one-bypass.js
+
+# Or spawn and attach
+frida -U -f com.example.notampering -l all-in-one-bypass.js --no-pause
+```
+
+## Advanced Countermeasures
+
+<CardGroup cols={2}>
+  <Card title="Obfuscated Checks" icon="mask">
+    Hide anti-tampering logic within obfuscated code to make it harder to locate and bypass.
+  </Card>
+
+  <Card title="Distributed Checks" icon="network-wired">
+    Spread checks throughout the codebase rather than centralizing them.
+  </Card>
+
+  <Card title="Time-Delayed Responses" icon="clock">
+    Don't crash immediately when tampering is detected - delay or corrupt data subtly.
+  </Card>
+
+  <Card title="Server-Side Validation" icon="server">
+    Verify device integrity on the server side using device attestation.
+  </Card>
+</CardGroup>
+
+## Best Practices for Analysis
+
+<Steps>
+  <Step title="Identify All Protection Mechanisms">
+    Catalog every anti-tampering check before attempting to bypass them.
+  </Step>
+
+  <Step title="Prioritize Bypasses">
+    Start with the most critical protections (like ptrace) that block analysis entirely.
+  </Step>
+
+  <Step title="Test Incrementally">
+    Bypass one protection at a time and verify the app still functions correctly.
+  </Step>
+
+  <Step title="Document Patches">
+    Keep detailed notes on what you bypassed and how, for reproducibility.
+  </Step>
+
+  <Step title="Consider Automation">
+    Create reusable Frida scripts for common protection patterns.
+  </Step>
+</Steps>
+
+<Warning>
+  Some apps use multiple layers of protection. Bypassing one check may trigger others. Monitor app behavior carefully after each bypass.
+</Warning>
+
+## Further Reading
+
+<CardGroup cols={2}>
+  <Card title="Detection Techniques" icon="magnifying-glass" href="/obfuscation/detection-techniques">
+    Learn to identify anti-tampering mechanisms in binaries.
+  </Card>
+
+  <Card title="Control Flow Flattening" icon="diagram-project" href="/obfuscation/control-flow-flattening">
+    Often combined with anti-tampering to hide protection logic.
+  </Card>
+</CardGroup>

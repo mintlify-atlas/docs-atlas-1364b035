@@ -1,0 +1,601 @@
+---
+title: 'Runtime Inspection'
+description: 'Inspecting and manipulating the Objective-C and Swift runtime for reverse engineering'
+icon: 'microscope'
+---
+
+## Understanding the Objective-C Runtime
+
+The **Objective-C runtime** is a dynamic library that provides the foundation for Objective-C's object-oriented features. Unlike statically compiled languages, Objective-C resolves method calls, manages objects, and handles message passing at runtime.
+
+### Key Runtime Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Message Dispatch" icon="paper-plane">
+    All method calls go through objc_msgSend for dynamic dispatch
+  </Card>
+  <Card title="Introspection" icon="magnifying-glass">
+    Query classes, methods, properties, and instance variables at runtime
+  </Card>
+  <Card title="Dynamic Modification" icon="wand-magic-sparkles">
+    Add methods, exchange implementations, and modify classes on-the-fly
+  </Card>
+  <Card title="Type Encoding" icon="code">
+    Runtime type information stored as encoded strings
+  </Card>
+</CardGroup>
+
+<Info>
+This dynamic nature makes Objective-C extremely powerful for reverse engineering - you can inspect and modify almost everything at runtime.
+</Info>
+
+## Runtime Architecture
+
+### Message Sending
+
+Every method call in Objective-C is actually a message send:
+
+```objectivec
+// Source code
+[myObject doSomethingWithValue:42];
+
+// Compiled to
+objc_msgSend(myObject, @selector(doSomethingWithValue:), 42);
+```
+
+The runtime performs these steps:
+
+<Steps>
+  <Step title="Selector Lookup">
+    Find the method implementation (IMP) for the selector in the class's method list
+  </Step>
+  <Step title="Cache Check">
+    Check the method cache for recent lookups (optimization)
+  </Step>
+  <Step title="Inheritance Walk">
+    If not found, walk up the inheritance chain to superclasses
+  </Step>
+  <Step title="Message Forwarding">
+    If still not found, trigger message forwarding mechanism
+  </Step>
+  <Step title="Execute IMP">
+    Call the function pointer (IMP) with the receiver and arguments
+  </Step>
+</Steps>
+
+### Class Structure
+
+At runtime, each Objective-C class is represented by a `Class` structure containing:
+
+```c
+struct objc_class {
+    Class isa;                      // Metaclass pointer
+    Class super_class;              // Superclass pointer
+    const char *name;               // Class name
+    long version;
+    long info;
+    long instance_size;
+    struct objc_ivar_list *ivars;   // Instance variables
+    struct objc_method_list **methodLists;  // Methods
+    struct objc_cache *cache;       // Method cache
+    struct objc_protocol_list *protocols;   // Protocols
+};
+```
+
+<Tip>
+Every class also has a **metaclass** - a class that describes the class itself. This is how class methods work in Objective-C.
+</Tip>
+
+## Class Dumping
+
+**Class dumping** extracts the interface declarations of all classes in a binary, revealing the app's structure without access to source code.
+
+### Why Class Dump?
+
+Class dumping provides:
+
+- Complete class hierarchies and inheritance relationships
+- All public, private, and internal method signatures
+- Property declarations and instance variable names
+- Protocol conformances
+- Type information for method parameters and return values
+
+### Tools for Class Dumping
+
+<Tabs>
+  <Tab title="class-dump">
+    The classic command-line tool for extracting class information:
+    
+    ```bash
+    # Install via Homebrew
+    brew install class-dump
+    
+    # Dump classes from an app binary
+    class-dump /path/to/app/binary > headers.h
+    
+    # Dump specific architecture on universal binaries
+    class-dump --arch arm64 /path/to/app/binary > headers.h
+    ```
+    
+    <Note>
+    class-dump only works on unencrypted binaries. App Store apps must be decrypted first using tools like Clutch or frida-ios-dump.
+    </Note>
+  </Tab>
+  
+  <Tab title="dsdump">
+    Modern Swift-compatible class dumper:
+    
+    ```bash
+    # Clone and build
+    git clone https://github.com/DerekSelander/dsdump
+    cd dsdump && make
+    
+    # Dump classes including Swift types
+    dsdump --objc --swift /path/to/binary
+    
+    # Output to file
+    dsdump --objc --swift /path/to/binary -o output.txt
+    ```
+  </Tab>
+  
+  <Tab title="Frida (Runtime)">
+    Dump classes from a running process:
+    
+    ```javascript
+    // List all classes
+    ObjC.enumerateLoadedClasses({
+        onMatch: function(className) {
+            console.log(className);
+        },
+        onComplete: function() {}
+    });
+    
+    // Dump specific class methods
+    var className = "AppDelegate";
+    var methods = ObjC.classes[className].$ownMethods;
+    console.log("[*] Methods of " + className + ":");
+    methods.forEach(function(method) {
+        console.log("  " + method);
+    });
+    ```
+  </Tab>
+</Tabs>
+
+### Class Dump Output Example
+
+```objectivec UserManager.h
+@interface UserManager : NSObject
+{
+    NSString *_currentUserId;
+    BOOL _isPremiumUser;
+    NSMutableDictionary *_userCache;
+}
+
+@property (nonatomic, copy) NSString *currentUserId;
+@property (nonatomic, assign) BOOL isPremiumUser;
+
+- (id)initWithUserId:(NSString *)userId;
+- (void)loginWithEmail:(NSString *)email password:(NSString *)password completion:(void (^)(BOOL success, NSError *error))completion;
+- (void)logout;
+- (BOOL)isUserAuthenticated;
+- (void)updateUserProfile:(NSDictionary *)profileData;
+- (NSDictionary *)getUserData;
+
+@end
+```
+
+This reveals:
+- Three instance variables (including their types)
+- Two properties
+- Six methods with complete signatures
+- The superclass (NSObject)
+
+## Method Listing
+
+Beyond class dumping, you can enumerate and inspect methods at runtime.
+
+### Runtime Introspection APIs
+
+<AccordionGroup>
+  <Accordion title="objc_getClassList" icon="list">
+    Get all registered classes:
+    ```objectivec
+    int numClasses = objc_getClassList(NULL, 0);
+    Class *classes = (Class *)malloc(sizeof(Class) * numClasses);
+    objc_getClassList(classes, numClasses);
+    ```
+  </Accordion>
+  
+  <Accordion title="class_copyMethodList" icon="function">
+    Get all methods of a class:
+    ```objectivec
+    unsigned int methodCount;
+    Method *methods = class_copyMethodList([MyClass class], &methodCount);
+    for (int i = 0; i < methodCount; i++) {
+        SEL selector = method_getName(methods[i]);
+        NSLog(@"%@", NSStringFromSelector(selector));
+    }
+    free(methods);
+    ```
+  </Accordion>
+  
+  <Accordion title="class_copyPropertyList" icon="tag">
+    Get all properties:
+    ```objectivec
+    unsigned int propertyCount;
+    objc_property_t *properties = class_copyPropertyList([MyClass class], &propertyCount);
+    for (int i = 0; i < propertyCount; i++) {
+        const char *name = property_getName(properties[i]);
+        NSLog(@"%s", name);
+    }
+    free(properties);
+    ```
+  </Accordion>
+  
+  <Accordion title="class_copyIvarList" icon="variable">
+    Get instance variables:
+    ```objectivec
+    unsigned int ivarCount;
+    Ivar *ivars = class_copyIvarList([MyClass class], &ivarCount);
+    for (int i = 0; i < ivarCount; i++) {
+        const char *name = ivar_getName(ivars[i]);
+        const char *type = ivar_getTypeEncoding(ivars[i]);
+        NSLog(@"%s (%s)", name, type);
+    }
+    free(ivars);
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Method Signature Analysis
+
+Method signatures include type encodings:
+
+```objectivec
+- (void)setAge:(int)age;          // v@:i  (void, object, selector, int)
+- (NSString *)name;                // @@:   (object, object, selector)
+- (BOOL)isValid:(id)obj;          // B@:@  (BOOL, object, selector, object)
+```
+
+<CardGroup cols={3}>
+  <Card title="Type Codes">
+    - `@` = object
+    - `:` = SEL
+    - `v` = void
+    - `i` = int
+    - `B` = BOOL
+    - `f` = float
+    - `d` = double
+  </Card>
+  <Card title="Modifiers">
+    - `^` = pointer
+    - `*` = char*
+    - `#` = Class
+    - `r` = const
+    - `n` = in
+    - `o` = out
+  </Card>
+  <Card title="Structures">
+    - `{name=...}` = struct
+    - `[type]` = array
+    - `(name=...)` = union
+    - `bN` = bitfield
+  </Card>
+</CardGroup>
+
+## Runtime Manipulation
+
+The Objective-C runtime allows dynamic modification of classes and methods.
+
+### Adding Methods at Runtime
+
+```objectivec
+// Define a new method implementation
+void dynamicMethodIMP(id self, SEL _cmd) {
+    NSLog(@"Dynamic method called!");
+}
+
+// Add method to a class
+Class myClass = [MyClass class];
+class_addMethod(myClass, 
+                @selector(dynamicMethod), 
+                (IMP)dynamicMethodIMP, 
+                "v@:");
+
+// Now you can call it
+MyClass *obj = [[MyClass alloc] init];
+[obj dynamicMethod];
+```
+
+### Method Replacement
+
+```objectivec
+// Get the original method
+Method originalMethod = class_getInstanceMethod([MyClass class], @selector(originalMethod));
+
+// Define replacement implementation
+IMP newIMP = imp_implementationWithBlock(^(id self) {
+    NSLog(@"Replaced implementation");
+});
+
+// Replace it
+method_setImplementation(originalMethod, newIMP);
+```
+
+<Warning>
+Modifying methods at runtime can cause crashes or unexpected behavior. Always test thoroughly and have fallback mechanisms.
+</Warning>
+
+### Associated Objects
+
+Add properties to existing classes without subclassing:
+
+```objectivec
+// Define a key (use static to ensure uniqueness)
+static char kAssociatedObjectKey;
+
+// Set associated object
+objc_setAssociatedObject(myObject, 
+                         &kAssociatedObjectKey, 
+                         @"Custom data", 
+                         OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+// Get associated object
+NSString *data = objc_getAssociatedObject(myObject, &kAssociatedObjectKey);
+```
+
+Association policies:
+- `OBJC_ASSOCIATION_ASSIGN` - Weak reference
+- `OBJC_ASSOCIATION_RETAIN_NONATOMIC` - Strong reference
+- `OBJC_ASSOCIATION_COPY_NONATOMIC` - Copy the value
+- `OBJC_ASSOCIATION_RETAIN` - Strong, atomic
+- `OBJC_ASSOCIATION_COPY` - Copy, atomic
+
+## Frida for Runtime Inspection
+
+**Frida** is the most powerful tool for runtime manipulation of iOS apps.
+
+### Basic Frida Script
+
+```javascript frida-script.js
+// Attach to running process
+setTimeout(function() {
+    Java.perform(function() {
+        // List all loaded classes
+        console.log("[*] Enumerating classes...");
+        
+        ObjC.enumerateLoadedClasses({
+            onMatch: function(className) {
+                if (className.includes("User")) {
+                    console.log("[+] Found: " + className);
+                    
+                    // Get the class
+                    var cls = ObjC.classes[className];
+                    
+                    // List methods
+                    console.log("  Methods:");
+                    cls.$ownMethods.forEach(function(method) {
+                        console.log("    " + method);
+                    });
+                }
+            },
+            onComplete: function() {
+                console.log("[*] Enumeration complete");
+            }
+        });
+    });
+}, 0);
+```
+
+### Method Hooking with Frida
+
+```javascript hook-login.js
+// Hook a specific method
+var targetClass = ObjC.classes.LoginViewController;
+var targetMethod = targetClass["- loginWithEmail:password:completion:"];
+
+Interceptor.attach(targetMethod.implementation, {
+    onEnter: function(args) {
+        // args[0] = self
+        // args[1] = selector
+        // args[2] = first argument (email)
+        // args[3] = second argument (password)
+        
+        var email = ObjC.Object(args[2]);
+        var password = ObjC.Object(args[3]);
+        
+        console.log("[*] Login attempt:");
+        console.log("    Email: " + email.toString());
+        console.log("    Password: " + password.toString());
+    },
+    onLeave: function(retval) {
+        console.log("[*] Login method returned");
+    }
+});
+```
+
+### Running Frida Scripts
+
+```bash
+# List running processes
+frida-ps -Ua
+
+# Attach to app and run script
+frida -U -f com.example.app -l frida-script.js
+
+# Attach to running app
+frida -U "App Name" -l frida-script.js
+
+# Spawn and attach
+frida -U -f com.example.app --no-pause -l frida-script.js
+```
+
+<Tip>
+Use `frida-trace` for quick method tracing without writing scripts:
+```bash
+frida-trace -U -f com.example.app -m "-[LoginViewController *]"
+```
+</Tip>
+
+## Swift Runtime Considerations
+
+While Swift uses a different runtime model, it still interfaces with Objective-C:
+
+### Swift-ObjC Interoperability
+
+```swift
+// This Swift class is exposed to ObjC runtime
+@objc class MySwiftClass: NSObject {
+    @objc func myMethod() {
+        print("Called from ObjC or Frida")
+    }
+}
+
+// This one is NOT (pure Swift)
+class PureSwiftClass {
+    func pureSwiftMethod() {
+        print("Not accessible from ObjC runtime")
+    }
+}
+```
+
+<AccordionGroup>
+  <Accordion title="@objc Classes">
+    Swift classes marked with `@objc` or inheriting from `NSObject` are exposed to the Objective-C runtime and can be inspected/manipulated.
+  </Accordion>
+  
+  <Accordion title="Pure Swift Classes">
+    Pure Swift classes use static dispatch and vtables. They're not accessible through the ObjC runtime but can still be analyzed with Swift-specific tools.
+  </Accordion>
+  
+  <Accordion title="Swift Mangling">
+    Swift symbols are name-mangled. Use swift-demangle or the SwiftNameDemangler.py script to decode them.
+  </Accordion>
+</AccordionGroup>
+
+## Practical Analysis Workflow
+
+<Steps>
+  <Step title="Decrypt the Binary">
+    Use Clutch, frida-ios-dump, or CrackerXI to decrypt App Store apps
+  </Step>
+  
+  <Step title="Class Dump">
+    Extract all class headers to understand the app structure
+    ```bash
+    class-dump MyApp > headers.h
+    ```
+  </Step>
+  
+  <Step title="Static Analysis">
+    Load the binary in Ghidra or Hopper for disassembly analysis
+  </Step>
+  
+  <Step title="Identify Target Methods">
+    Find interesting methods from class dumps (authentication, encryption, etc.)
+  </Step>
+  
+  <Step title="Runtime Hooking">
+    Use Frida to hook and inspect method calls at runtime
+  </Step>
+  
+  <Step title="Test and Validate">
+    Verify your understanding by modifying behavior and observing results
+  </Step>
+</Steps>
+
+## Common Runtime Patterns
+
+### Singleton Detection
+
+```javascript frida-singleton.js
+// Find singleton accessor methods
+ObjC.enumerateLoadedClasses({
+    onMatch: function(className) {
+        var cls = ObjC.classes[className];
+        if (cls.$methods.some(m => m.includes("sharedInstance") || m.includes("shared"))) {
+            console.log("[+] Potential singleton: " + className);
+        }
+    },
+    onComplete: function() {}
+});
+```
+
+### Encryption Key Extraction
+
+```javascript frida-keys.js
+// Hook common crypto methods
+var CCCrypt = Module.findExportByName("libcommonCrypto.dylib", "CCCrypt");
+Interceptor.attach(CCCrypt, {
+    onEnter: function(args) {
+        console.log("[*] CCCrypt called");
+        console.log("    Key: " + hexdump(args[3], { length: 32 }));
+    }
+});
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Combine Approaches" icon="layer-group">
+    Use both static and dynamic analysis for complete understanding
+  </Card>
+  <Card title="Start Broad" icon="magnifying-glass">
+    Begin with class dumps and general exploration before diving deep
+  </Card>
+  <Card title="Document Findings" icon="file-lines">
+    Keep detailed notes on class relationships and method purposes
+  </Card>
+  <Card title="Test Safely" icon="shield-halved">
+    Use a jailbroken test device, not your primary device
+  </Card>
+</CardGroup>
+
+## Advanced Tools
+
+<Tabs>
+  <Tab title="Cycript">
+    Interactive runtime exploration:
+    ```bash
+    # Attach to running app
+    cycript -p "App Name"
+    
+    # Explore runtime
+    cy# [UIApp keyWindow]
+    cy# ObjectiveC.classes
+    cy# choose(LoginViewController)
+    ```
+  </Tab>
+  
+  <Tab title="Passionfruit">
+    Web-based iOS app analysis:
+    ```bash
+    npm install -g passionfruit
+    passionfruit
+    # Open http://localhost:31337
+    ```
+  </Tab>
+  
+  <Tab title="objection">
+    Frida-based mobile exploration toolkit:
+    ```bash
+    objection -g "App Name" explore
+    
+    # Inside objection
+    ios hooking list classes
+    ios hooking search methods LoginViewController
+    ios hooking watch method "-[LoginViewController loginWithEmail:password:completion:]"
+    ```
+  </Tab>
+</Tabs>
+
+## Further Reading
+
+<CardGroup cols={2}>
+  <Card title="Swift Name Mangling" icon="shuffle" href="/swift-objc/swift-name-mangling">
+    Decode Swift mangled names in binaries
+  </Card>
+  <Card title="Method Swizzling" icon="arrow-right-arrow-left" href="/swift-objc/method-swizzling">
+    Detect and analyze method swizzling
+  </Card>
+</CardGroup>

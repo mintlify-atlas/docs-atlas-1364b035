@@ -1,0 +1,419 @@
+---
+title: "Control Flow Flattening"
+description: "Understanding and analyzing control flow obfuscation in iOS applications"
+icon: "diagram-project"
+---
+
+Control flow flattening is a powerful obfuscation technique that transforms the natural structure of code into a state machine-like representation, making the original program logic extremely difficult to understand.
+
+## What is Control Flow Flattening?
+
+Control flow flattening transforms code by:
+
+<Steps>
+  <Step title="Breaking Down Control Flow">
+    The original program is divided into basic blocks (sequences of instructions with no branches).
+  </Step>
+
+  <Step title="Adding a Dispatcher">
+    A central switch statement acts as a dispatcher that determines which block executes next.
+  </Step>
+
+  <Step title="Flattening the Structure">
+    All blocks are placed at the same nesting level, hiding the original hierarchical structure.
+  </Step>
+
+  <Step title="Using State Variables">
+    A variable tracks the current state, controlling which block the dispatcher executes.
+  </Step>
+</Steps>
+
+<Info>
+  This technique is also known as **control flow obfuscation** or **dispatcher-based obfuscation**.
+</Info>
+
+## How It Works
+
+### Before Flattening
+
+```swift
+func calculateDiscount(price: Double, memberLevel: Int) -> Double {
+    var discount = 0.0
+    
+    if memberLevel >= 3 {
+        discount = 0.20
+    } else if memberLevel == 2 {
+        discount = 0.10
+    } else {
+        discount = 0.05
+    }
+    
+    return price * (1.0 - discount)
+}
+```
+
+### After Flattening
+
+```swift
+func calculateDiscount(price: Double, memberLevel: Int) -> Double {
+    var state = 0
+    var discount = 0.0
+    var result = 0.0
+    
+    while true {
+        switch state {
+        case 0:
+            // Check member level >= 3
+            if memberLevel >= 3 {
+                state = 1
+            } else {
+                state = 2
+            }
+            
+        case 1:
+            // Set premium discount
+            discount = 0.20
+            state = 4
+            
+        case 2:
+            // Check member level == 2
+            if memberLevel == 2 {
+                state = 3
+            } else {
+                state = 5
+            }
+            
+        case 3:
+            // Set standard discount
+            discount = 0.10
+            state = 4
+            
+        case 4:
+            // Calculate final price
+            result = price * (1.0 - discount)
+            state = 6
+            
+        case 5:
+            // Set basic discount
+            discount = 0.05
+            state = 4
+            
+        case 6:
+            // Exit
+            return result
+            
+        default:
+            return 0.0
+        }
+    }
+}
+```
+
+<Warning>
+  The flattened version has the same functionality but is significantly harder to understand at a glance. The natural if-else structure is completely obscured.
+</Warning>
+
+## Advanced Techniques
+
+<Tabs>
+  <Tab title="Opaque Predicates">
+    Adding conditions that always evaluate to true or false, but aren't obviously so:
+    
+    ```swift
+    // Always true, but not obvious
+    if (x * x) >= 0 {
+        state = nextState
+    }
+    
+    // Always false for integers
+    if (x * x) < 0 {
+        state = dummyState  // Never executed
+    }
+    ```
+  </Tab>
+
+  <Tab title="State Encoding">
+    Using non-sequential or encoded state values:
+    
+    ```swift
+    // Instead of 0, 1, 2, 3...
+    case 0x4A3B:
+        // Block 1
+        state = 0x7F2E
+    case 0x7F2E:
+        // Block 2
+        state = 0x1C94
+    ```
+  </Tab>
+
+  <Tab title="Multiple Dispatchers">
+    Nesting multiple switch statements:
+    
+    ```swift
+    while true {
+        switch dispatcher {
+        case 0:
+            switch state {
+            case 0: /* ... */
+            case 1: /* ... */
+            }
+        case 1:
+            switch state {
+            case 2: /* ... */
+            case 3: /* ... */
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="State Computation">
+    Computing next state instead of hardcoding:
+    
+    ```swift
+    // Next state is computed, not a constant
+    state = (state ^ 0x5A) + memberLevel * 7
+    ```
+  </Tab>
+</Tabs>
+
+## Identifying Flattened Code
+
+Look for these patterns when analyzing binaries:
+
+<AccordionGroup>
+  <Accordion title="Assembly Patterns" icon="microchip">
+    ```asm
+    ; Typical flattened code in ARM64
+    .loop:
+        ldr     w8, [sp, #state]     ; Load state variable
+        cmp     w8, #0               ; Compare with case value
+        b.ne    .case1               ; Jump if not equal
+        
+    .case0:
+        ; Block 0 code
+        mov     w8, #1               ; Next state
+        str     w8, [sp, #state]     ; Store state
+        b       .loop                ; Back to dispatcher
+        
+    .case1:
+        cmp     w8, #1
+        b.ne    .case2
+        ; Block 1 code
+        ...
+    ```
+  </Accordion>
+
+  <Accordion title="Control Flow Graph" icon="diagram-nodes">
+    - **Star topology**: All basic blocks connect back to a central dispatcher
+    - **Flat structure**: No natural hierarchical nesting
+    - **High indegree**: Dispatcher block has edges from all other blocks
+    - **Low cohesion**: Unrelated code blocks at same level
+  </Accordion>
+
+  <Accordion title="Code Metrics" icon="chart-line">
+    - **High cyclomatic complexity**: Many paths through code
+    - **Deep nesting**: Multiple levels of switches or computed jumps
+    - **Long functions**: Many lines with repetitive structure
+    - **Low readability**: Decompiled code is difficult to understand
+  </Accordion>
+</AccordionGroup>
+
+## Example Analysis: ControlFlowFlattening.ipa
+
+<Note>
+  The example file is located at:
+  `/home/daytona/workspace/source/ObfuscatedAppExamples/ControlFlowFlattening.ipa`
+</Note>
+
+### Extracting the Binary
+
+<CodeGroup>
+```bash Unzip IPA
+# Extract the IPA file
+unzip ControlFlowFlattening.ipa -d ControlFlowFlattening
+
+# Navigate to the app bundle
+cd ControlFlowFlattening/Payload/*.app
+
+# Identify the main binary
+ls -la
+```
+
+```bash Analyze with otool
+# Check binary header
+otool -h ControlFlowFlattening
+
+# Dump symbol table
+otool -tv ControlFlowFlattening | grep -i "function"
+
+# Examine specific section
+otool -s __TEXT __text ControlFlowFlattening
+```
+</CodeGroup>
+
+### Analyzing with Hopper/IDA
+
+<Steps>
+  <Step title="Load the Binary">
+    Open the binary in Hopper Disassembler or IDA Pro.
+  </Step>
+
+  <Step title="Locate Dispatcher Functions">
+    Look for functions with:
+    - Large switch statements
+    - Loops at the beginning
+    - Many basic blocks at the same level
+  </Step>
+
+  <Step title="Identify State Variables">
+    Track variables that:
+    - Are loaded at the beginning of loops
+    - Control switch/branch decisions
+    - Are updated at the end of basic blocks
+  </Step>
+
+  <Step title="Map Control Flow">
+    Create a state transition diagram showing:
+    - Each state value
+    - Which block executes for each state
+    - Conditions for state transitions
+  </Step>
+</Steps>
+
+### Using Frida for Dynamic Analysis
+
+```javascript
+// Hook the obfuscated function to trace state transitions
+Interceptor.attach(Module.findExportByName(null, "_obfuscatedFunction"), {
+    onEnter: function(args) {
+        console.log("[+] Function called");
+        
+        // Trace state variable changes
+        var stateAddr = this.context.sp.add(0x10); // Adjust offset
+        
+        this.interval = setInterval(function() {
+            var state = stateAddr.readU32();
+            console.log("    State: " + state);
+        }, 10);
+    },
+    onLeave: function(retval) {
+        clearInterval(this.interval);
+        console.log("[+] Function returned: " + retval);
+    }
+});
+```
+
+<Tip>
+  Recording state transitions during execution can help you understand the original control flow and create a state transition diagram.
+</Tip>
+
+## Deobfuscation Strategies
+
+<CardGroup cols={2}>
+  <Card title="Manual Reconstruction" icon="pencil">
+    Manually trace execution paths and rebuild the original control flow structure by analyzing state transitions.
+  </Card>
+
+  <Card title="Symbolic Execution" icon="computer">
+    Use tools like angr or Triton to symbolically execute the flattened code and extract path constraints.
+  </Card>
+
+  <Card title="Pattern Matching" icon="magnifying-glass">
+    Identify common patterns in the flattened structure and apply automated transformations to simplify.
+  </Card>
+
+  <Card title="Dynamic Tracing" icon="route">
+    Record actual execution paths using Frida or LLDB, then reconstruct the simplified flow.
+  </Card>
+</CardGroup>
+
+## Automated Tools
+
+<Tabs>
+  <Tab title="D810 (IDA Plugin)">
+    D810 is an IDA Pro plugin that attempts to deobfuscate control flow flattening:
+    
+    ```bash
+    # Install D810
+    git clone https://github.com/eshard/d810
+    cp -r d810 ~/idapro/plugins/
+    
+    # Use in IDA: Edit -> Plugins -> D810
+    ```
+  </Tab>
+
+  <Tab title="LLVM Deobfuscator">
+    Custom LLVM passes can simplify flattened IR:
+    
+    ```bash
+    # Compile with LLVM bitcode
+    clang -emit-llvm -c obfuscated.c -o obfuscated.bc
+    
+    # Apply deobfuscation pass
+    opt -load DeobfuscatorPass.so -deobfuscate obfuscated.bc -o clean.bc
+    ```
+  </Tab>
+
+  <Tab title="Angr">
+    Symbolic execution to recover control flow:
+    
+    ```python
+    import angr
+    
+    # Load binary
+    proj = angr.Project('ControlFlowFlattening')
+    
+    # Create state
+    state = proj.factory.entry_state()
+    
+    # Symbolically execute
+    simgr = proj.factory.simulation_manager(state)
+    simgr.explore()
+    
+    # Analyze paths
+    for path in simgr.deadended:
+        print(path.history)
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices for Analysis
+
+<Steps>
+  <Step title="Start with High-Level View">
+    Don't dive into details immediately. First understand the overall structure and identify the dispatcher pattern.
+  </Step>
+
+  <Step title="Focus on Critical Paths">
+    Not all code paths are equally important. Identify and analyze paths that handle sensitive operations first.
+  </Step>
+
+  <Step title="Use Dynamic Analysis">
+    Static analysis alone is insufficient. Combine it with runtime tracing to validate your understanding.
+  </Step>
+
+  <Step title="Document State Transitions">
+    Keep a detailed map of state values, their corresponding blocks, and transition conditions.
+  </Step>
+
+  <Step title="Leverage Automation">
+    Use scripts and tools to automate repetitive tasks like state tracking and path enumeration.
+  </Step>
+</Steps>
+
+<Warning>
+  Deobfuscating control flow flattening is time-intensive. Budget adequate time and consider whether full deobfuscation is necessary for your analysis goals.
+</Warning>
+
+## Further Reading
+
+<CardGroup cols={2}>
+  <Card title="Detection Techniques" icon="magnifying-glass" href="/obfuscation/detection-techniques">
+    Learn systematic approaches to detecting obfuscation patterns.
+  </Card>
+
+  <Card title="String Encryption" icon="key" href="/obfuscation/string-encryption">
+    Explore another common obfuscation technique often used alongside control flow flattening.
+  </Card>
+</CardGroup>

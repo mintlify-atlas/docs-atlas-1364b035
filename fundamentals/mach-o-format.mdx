@@ -1,0 +1,474 @@
+---
+title: "Mach-O Binary Format"
+description: "Deep dive into the Mach-O executable format used by iOS and macOS applications"
+---
+
+## Overview
+
+Mach-O (Mach Object) is the executable file format used by iOS, macOS, watchOS, and tvOS. Understanding Mach-O structure is essential for iOS reverse engineering, as it defines how executable code, data, and metadata are organized within a binary.
+
+<Note>
+Mach-O files can contain multiple architectures (called "fat" or "universal" binaries), though iOS apps typically contain only ARM64 architecture.
+</Note>
+
+## Mach-O File Structure
+
+A Mach-O file consists of three main regions:
+
+<Steps>
+  <Step title="Header">
+    Contains basic information about the binary including architecture, file type, and the number of load commands.
+  </Step>
+  
+  <Step title="Load Commands">
+    A series of commands that describe the binary's layout, dependencies, and how the dynamic linker should load it into memory.
+  </Step>
+  
+  <Step title="Data">
+    The actual code and data segments containing executable instructions, strings, constants, and other binary content.
+  </Step>
+</Steps>
+
+```
+┌─────────────────────┐
+│   Mach-O Header     │  ← Magic number, CPU type, file type
+├─────────────────────┤
+│   Load Command 1    │  ← Segment definitions
+│   Load Command 2    │  ← Dylib dependencies
+│   Load Command 3    │  ← Code signature location
+│        ...          │  ← Other metadata
+├─────────────────────┤
+│   __TEXT Segment    │  ← Executable code
+│   __DATA Segment    │  ← Initialized data
+│   __LINKEDIT       │  ← Linking information
+│        ...          │
+└─────────────────────┘
+```
+
+## Mach-O Header
+
+The header is the first structure in a Mach-O file and identifies the file format and architecture.
+
+### Header Structure
+
+<CodeGroup>
+```c Header Definition
+struct mach_header_64 {
+    uint32_t    magic;        // Magic number (0xFEEDFACF for 64-bit)
+    cpu_type_t  cputype;      // CPU type (ARM64)
+    cpu_subtype_t cpusubtype; // CPU subtype
+    uint32_t    filetype;     // File type (executable, dylib, etc.)
+    uint32_t    ncmds;        // Number of load commands
+    uint32_t    sizeofcmds;   // Total size of load commands
+    uint32_t    flags;        // Flags
+    uint32_t    reserved;     // Reserved (64-bit only)
+};
+```
+
+```bash Inspecting Header
+# Using otool
+otool -h MyApp
+
+# Output example:
+Mach header
+      magic cputype cpusubtype  caps    filetype ncmds sizeofcmds      flags
+ 0xfeedfacf 16777228          0  0x00           2    45       5624   0x00200085
+```
+</CodeGroup>
+
+### File Types
+
+<Tabs>
+  <Tab title="MH_EXECUTE (0x2)">
+    Standard executable binary - the main app binary.
+  </Tab>
+  
+  <Tab title="MH_DYLIB (0x6)">
+    Dynamic library (framework) that can be loaded by multiple processes.
+  </Tab>
+  
+  <Tab title="MH_BUNDLE (0x8)">
+    Plugin or bundle that's loaded dynamically.
+  </Tab>
+  
+  <Tab title="MH_DYLINKER (0x7)">
+    The dynamic linker itself (`/usr/lib/dyld`).
+  </Tab>
+</Tabs>
+
+### Important Flags
+
+<CardGroup cols={2}>
+  <Card title="MH_PIE" icon="shield">
+    Position Independent Executable - enables ASLR (Address Space Layout Randomization) for security.
+  </Card>
+  
+  <Card title="MH_NO_HEAP_EXECUTION" icon="lock">
+    Marks heap memory as non-executable, preventing code injection attacks.
+  </Card>
+  
+  <Card title="MH_ALLOW_STACK_EXECUTION" icon="warning">
+    Allows stack execution (security risk, rarely used in modern apps).
+  </Card>
+  
+  <Card title="MH_ENCRYPTED" icon="key">
+    Indicates the binary contains an encrypted segment (App Store binaries).
+  </Card>
+</CardGroup>
+
+## Load Commands
+
+Load commands describe how to load and link the binary. They immediately follow the header.
+
+### Common Load Commands
+
+<AccordionGroup>
+  <Accordion icon="table-cells" title="LC_SEGMENT_64 - Segment Definition">
+    Defines a segment to be mapped into memory. Each segment contains one or more sections.
+    
+    ```c
+    struct segment_command_64 {
+        uint32_t  cmd;           // LC_SEGMENT_64
+        uint32_t  cmdsize;       // Size of command
+        char      segname[16];   // Segment name
+        uint64_t  vmaddr;        // Virtual memory address
+        uint64_t  vmsize;        // Virtual memory size
+        uint64_t  fileoff;       // File offset
+        uint64_t  filesize;      // File size
+        vm_prot_t maxprot;       // Maximum protection
+        vm_prot_t initprot;      // Initial protection
+        uint32_t  nsects;        // Number of sections
+        uint32_t  flags;         // Flags
+    };
+    ```
+    
+    View segments:
+    ```bash
+    otool -l MyApp | grep -A 10 LC_SEGMENT_64
+    ```
+  </Accordion>
+
+  <Accordion icon="book" title="LC_LOAD_DYLIB - Dynamic Library">
+    Specifies a dynamic library dependency that must be loaded.
+    
+    ```bash
+    otool -L MyApp
+    # Output:
+    MyApp:
+        /System/Library/Frameworks/Foundation.framework/Foundation
+        /System/Library/Frameworks/UIKit.framework/UIKit
+        /usr/lib/libobjc.A.dylib
+        /usr/lib/libSystem.B.dylib
+    ```
+    
+    These dependencies are essential for understanding what frameworks and libraries the app uses.
+  </Accordion>
+
+  <Accordion icon="fingerprint" title="LC_CODE_SIGNATURE - Code Signature">
+    Points to the code signature data in the `__LINKEDIT` segment.
+    
+    ```bash
+    codesign -d -vv MyApp
+    ```
+    
+    Contains cryptographic hashes verifying binary integrity.
+  </Accordion>
+
+  <Accordion icon="lock" title="LC_ENCRYPTION_INFO_64 - Binary Encryption">
+    Indicates which parts of the binary are encrypted (App Store DRM).
+    
+    ```c
+    struct encryption_info_command_64 {
+        uint32_t cmd;        // LC_ENCRYPTION_INFO_64
+        uint32_t cmdsize;
+        uint32_t cryptoff;   // File offset of encrypted range
+        uint32_t cryptsize;  // Size of encrypted range
+        uint32_t cryptid;    // Encryption type (0 = decrypted, 1 = encrypted)
+    };
+    ```
+    
+    <Warning>
+    Binaries downloaded from the App Store are encrypted. You must decrypt them (using a jailbroken device) before analysis.
+    </Warning>
+  </Accordion>
+
+  <Accordion icon="compass" title="LC_MAIN - Entry Point">
+    Specifies the main entry point of the executable.
+    
+    ```c
+    struct entry_point_command {
+        uint32_t  cmd;        // LC_MAIN
+        uint32_t  cmdsize;
+        uint64_t  entryoff;   // File offset of entry point
+        uint64_t  stacksize;  // Initial stack size
+    };
+    ```
+  </Accordion>
+
+  <Accordion icon="id-card" title="LC_UUID - Unique Identifier">
+    A unique identifier for this specific build of the binary, used for symbolication and crash report matching.
+    
+    ```bash
+    otool -l MyApp | grep uuid
+    # uuid 4A3B2C1D-5E6F-7890-ABCD-EF1234567890
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Segments and Sections
+
+Segments are large regions of the binary mapped into memory with specific permissions. Each segment contains one or more sections.
+
+### Key Segments
+
+<Tabs>
+  <Tab title="__TEXT">
+    **Read-only, executable segment** containing code and read-only data.
+    
+    Key sections:
+    - `__text`: Executable machine code
+    - `__cstring`: C string constants
+    - `__const`: Constant data
+    - `__stubs`: Symbol stubs for dynamic linking
+    - `__objc_methname`: Objective-C method names
+    
+    ```bash
+    otool -l MyApp | grep -A 5 "segname __TEXT"
+    ```
+  </Tab>
+  
+  <Tab title="__DATA">
+    **Read-write segment** containing mutable data.
+    
+    Key sections:
+    - `__data`: Initialized mutable data
+    - `__bss`: Uninitialized static data
+    - `__objc_classlist`: Objective-C class list
+    - `__objc_protolist`: Objective-C protocol list
+    - `__objc_imageinfo`: Objective-C image information
+    
+    ```bash
+    otool -l MyApp | grep -A 5 "segname __DATA"
+    ```
+  </Tab>
+  
+  <Tab title="__LINKEDIT">
+    **Read-only segment** containing linking and debugging information.
+    
+    Contains:
+    - Symbol table
+    - String table
+    - Code signature
+    - Dynamic loader information
+    
+    This segment is used by the dynamic linker and debugging tools.
+  </Tab>
+  
+  <Tab title="__OBJC (Legacy)">
+    **Objective-C runtime information** (older binaries).
+    
+    Modern binaries store Objective-C data in `__DATA` segment sections instead.
+  </Tab>
+</Tabs>
+
+### Swift-Specific Sections
+
+Swift binaries contain additional sections for Swift metadata:
+
+<img src="/images/ghidra_swift_section.png" alt="Swift sections in Ghidra" />
+
+<CardGroup cols={2}>
+  <Card title="__swift5_types" icon="shapes">
+    Type metadata for Swift types
+  </Card>
+  
+  <Card title="__swift5_proto" icon="diagram-project">
+    Protocol conformance descriptors
+  </Card>
+  
+  <Card title="__swift5_fieldmd" icon="table">
+    Field metadata for reflection
+  </Card>
+  
+  <Card title="__swift5_capture" icon="camera">
+    Closure capture descriptors
+  </Card>
+</CardGroup>
+
+```bash
+# List all sections in binary
+otool -l MyApp | grep sectname
+
+# Extract specific section
+size -m -l MyApp
+```
+
+## Analyzing Mach-O Files
+
+### Using Command-Line Tools
+
+<CodeGroup>
+```bash otool - Display Information
+# Show all headers
+otool -h MyApp
+
+# Display load commands
+otool -l MyApp
+
+# Show shared libraries
+otool -L MyApp
+
+# Disassemble text section
+otool -tv MyApp
+
+# Show Objective-C metadata
+otool -o MyApp
+```
+
+```bash nm - Symbol Table
+# List all symbols
+nm MyApp
+
+# Show only external symbols
+nm -g MyApp
+
+# Show only undefined symbols
+nm -u MyApp
+```
+
+```bash size - Section Sizes
+# Show segment and section sizes
+size -m -l MyApp
+```
+
+```bash file - Quick Info
+# Identify file type and architecture
+file MyApp
+# Output: Mach-O 64-bit executable arm64
+```
+</CodeGroup>
+
+### Using Reverse Engineering Tools
+
+<Tabs>
+  <Tab title="Hopper Disassembler">
+    Powerful disassembler with Mach-O support:
+    - Visual segment and section browser
+    - Automatic Objective-C method detection
+    - Control flow graph generation
+    - Pseudo-code decompilation
+  </Tab>
+  
+  <Tab title="Ghidra">
+    Free NSA-developed reverse engineering tool:
+    - Full Mach-O parsing support
+    - Swift and Objective-C analysis
+    - Scripting with Python/Java
+    - Collaborative features
+  </Tab>
+  
+  <Tab title="IDA Pro">
+    Industry-standard disassembler:
+    - Excellent Mach-O support
+    - Advanced debugging capabilities
+    - Extensive plugin ecosystem
+    - Premium pricing
+  </Tab>
+  
+  <Tab title="MachOView">
+    Specialized Mach-O viewer:
+    - Visual representation of Mach-O structure
+    - Detailed header and load command inspection
+    - Free and open-source
+    - macOS only
+  </Tab>
+</Tabs>
+
+## Practical Examples
+
+### Example 1: Checking Encryption Status
+
+```bash
+# Check if binary is encrypted
+otool -l MyApp | grep -A 5 LC_ENCRYPTION_INFO
+
+# If cryptid = 1, binary is encrypted
+# If cryptid = 0, binary is decrypted
+```
+
+<Tip>
+Use tools like `frida-ios-dump` or `Clutch` on a jailbroken device to decrypt App Store binaries.
+</Tip>
+
+### Example 2: Extracting Objective-C Class Names
+
+```bash
+# Using class-dump (must be decrypted first)
+class-dump MyApp > class_headers.txt
+
+# Or extract from binary directly
+otool -oV MyApp | grep "class_name"
+```
+
+### Example 3: Finding String References
+
+```bash
+# Extract all strings
+strings MyApp > strings.txt
+
+# Search for API endpoints
+strings MyApp | grep -i "http"
+
+# Search for interesting keywords
+strings MyApp | grep -iE "(password|secret|key|token|api)"
+```
+
+### Example 4: Analyzing Example IPA
+
+```bash
+# Extract example IPA
+unzip ~/workspace/source/ObfuscatedAppExamples/ControlFlowFlattening.ipa -d /tmp/cff/
+cd /tmp/cff/Payload/*.app/
+
+# Examine Mach-O header
+otool -h ControlFlowFlattening
+
+# Check architecture
+lipo -info ControlFlowFlattening
+
+# List load commands
+otool -l ControlFlowFlattening | less
+
+# Extract symbols
+nm -g ControlFlowFlattening | head -50
+```
+
+## Security Considerations
+
+<Warning>
+Understanding Mach-O format is crucial for identifying security issues:
+- Missing PIE flag = No ASLR protection
+- Stack execution enabled = Code injection risk
+- Missing code signature = Tampering possible
+- Unencrypted binary = Easy to analyze
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Code Signing" icon="shield" href="/fundamentals/code-signing">
+    Learn how code signatures protect Mach-O binaries.
+  </Card>
+  
+  <Card title="iOS App Structure" icon="folder-tree" href="/fundamentals/ios-app-structure">
+    Understand the complete app bundle structure.
+  </Card>
+  
+  <Card title="Dynamic Analysis" icon="play">
+    Learn to analyze Mach-O binaries at runtime.
+  </Card>
+  
+  <Card title="Static Analysis" icon="magnifying-glass">
+    Deep dive into static analysis techniques.
+  </Card>
+</CardGroup>

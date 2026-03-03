@@ -1,0 +1,628 @@
+---
+title: "App Entitlements"
+description: "Understanding iOS app entitlements, permissions, and security capabilities"
+---
+
+## Overview
+
+Entitlements are key-value pairs that grant an iOS app permission to use specific system features and capabilities. They act as a security contract between the app, Apple's operating system, and the user, controlling what privileged operations an app can perform.
+
+<Note>
+Entitlements are embedded in the app's code signature and verified at runtime. An app cannot use a capability without the corresponding entitlement, even if the code tries to access it.
+</Note>
+
+## What Are Entitlements?
+
+Entitlements are:
+- **Security tokens** that grant specific capabilities
+- **Embedded** in the app's code signature
+- **Validated** by Apple during app review and at runtime
+- **Provisioned** through provisioning profiles and App Store Connect
+- **Immutable** after signing (cannot be changed without re-signing)
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
+<plist version="1.0">
+<dict>
+    <key>application-identifier</key>
+    <string>TEAMID.com.company.appname</string>
+    
+    <key>com.apple.developer.icloud-container-identifiers</key>
+    <array>
+        <string>iCloud.com.company.appname</string>
+    </array>
+    
+    <key>com.apple.developer.icloud-services</key>
+    <array>
+        <string>CloudKit</string>
+    </array>
+    
+    <key>keychain-access-groups</key>
+    <array>
+        <string>TEAMID.com.company.appname</string>
+    </array>
+</dict>
+</plist>
+```
+
+## How Entitlements Work
+
+<Steps>
+  <Step title="Developer Configuration">
+    Developer enables capabilities in Xcode or App Store Connect, which generates required entitlements.
+  </Step>
+  
+  <Step title="Provisioning Profile">
+    Apple creates a provisioning profile that includes the approved entitlements for the app.
+  </Step>
+  
+  <Step title="Code Signing">
+    During signing, entitlements are embedded in the code signature's special slot (-5 for XML, -7 for DER).
+  </Step>
+  
+  <Step title="Runtime Verification">
+    iOS verifies entitlements match the provisioning profile and enforces them during execution.
+  </Step>
+</Steps>
+
+```
+┌──────────────────────────────────────────┐
+│   Developer enables capability in Xcode  │
+└────────────────┬─────────────────────────┘
+                 ↓
+┌──────────────────────────────────────────┐
+│   Apple generates provisioning profile   │
+│   with entitlements                      │
+└────────────────┬─────────────────────────┘
+                 ↓
+┌──────────────────────────────────────────┐
+│   codesign embeds entitlements in        │
+│   signature during build                 │
+└────────────────┬─────────────────────────┘
+                 ↓
+┌──────────────────────────────────────────┐
+│   iOS validates entitlements at launch   │
+│   and enforces during runtime            │
+└──────────────────────────────────────────┘
+```
+
+## Common Entitlements
+
+### App Identification
+
+<AccordionGroup>
+  <Accordion icon="id-badge" title="application-identifier">
+    **Required for all apps.** Combines Team ID and bundle identifier.
+    
+    ```xml
+    <key>application-identifier</key>
+    <string>A1B2C3D4E5.com.company.appname</string>
+    ```
+    
+    Format: `[Team ID].[Bundle ID]`
+    
+    This uniquely identifies your app across the entire iOS ecosystem.
+  </Accordion>
+
+  <Accordion icon="users" title="com.apple.developer.team-identifier">
+    Your Apple Developer Team ID.
+    
+    ```xml
+    <key>com.apple.developer.team-identifier</key>
+    <string>A1B2C3D4E5</string>
+    ```
+    
+    Used for keychain sharing and other team-level features.
+  </Accordion>
+</AccordionGroup>
+
+### Development & Debugging
+
+<AccordionGroup>
+  <Accordion icon="bug" title="get-task-allow">
+    **Critical for reverse engineering detection.**
+    
+    ```xml
+    <key>get-task-allow</key>
+    <true/>
+    ```
+    
+    When `true`:
+    - Allows debuggers to attach (lldb, Xcode debugger)
+    - Permits dynamic instrumentation tools (Frida, Cycript)
+    - Only present in development builds
+    - **Never** in App Store releases
+    
+    <Warning>
+    If an App Store app has this entitlement, it's either:
+    - A development/test build
+    - Re-signed with a development profile
+    - Potentially compromised
+    </Warning>
+  </Accordion>
+
+  <Accordion icon="vial" title="com.apple.security.get-task-allow">
+    macOS equivalent of `get-task-allow`, sometimes found in iOS apps with Mac Catalyst support.
+  </Accordion>
+</AccordionGroup>
+
+### Data Protection & Keychain
+
+<AccordionGroup>
+  <Accordion icon="key" title="keychain-access-groups">
+    Defines which keychain groups the app can access.
+    
+    ```xml
+    <key>keychain-access-groups</key>
+    <array>
+        <string>A1B2C3D4E5.com.company.appname</string>
+        <string>A1B2C3D4E5.com.company.shared</string>
+    </array>
+    ```
+    
+    Enables:
+    - Keychain item storage and retrieval
+    - Sharing keychain data between apps (same team)
+    - Sharing with app extensions
+    
+    <Tip>
+    Reverse engineers examine keychain access groups to find shared data between apps from the same developer.
+    </Tip>
+  </Accordion>
+
+  <Accordion icon="shield" title="com.apple.developer.default-data-protection">
+    Sets the default data protection level for app files.
+    
+    ```xml
+    <key>com.apple.developer.default-data-protection</key>
+    <string>NSFileProtectionComplete</string>
+    ```
+    
+    Levels:
+    - `NSFileProtectionComplete`: Only accessible when device unlocked
+    - `NSFileProtectionCompleteUnlessOpen`: Protected until first open
+    - `NSFileProtectionCompleteUntilFirstUserAuthentication`: Default
+    - `NSFileProtectionNone`: No protection
+  </Accordion>
+</AccordionGroup>
+
+### App Groups & Data Sharing
+
+<AccordionGroup>
+  <Accordion icon="folder-tree" title="com.apple.security.application-groups">
+    Allows multiple apps and extensions to share data via a shared container.
+    
+    ```xml
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.company.shared</string>
+    </array>
+    ```
+    
+    Enables:
+    - Shared UserDefaults (`UserDefaults(suiteName:)`)
+    - Shared file storage (`containerURL(forSecurityApplicationGroupIdentifier:)`)
+    - Communication between app and extensions
+    
+    ```swift
+    // Access shared container
+    let sharedURL = FileManager.default.containerURL(
+        forSecurityApplicationGroupIdentifier: "group.com.company.shared"
+    )
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### iCloud & CloudKit
+
+<AccordionGroup>
+  <Accordion icon="cloud" title="com.apple.developer.icloud-services">
+    Specifies which iCloud services the app uses.
+    
+    ```xml
+    <key>com.apple.developer.icloud-services</key>
+    <array>
+        <string>CloudKit</string>
+        <string>CloudDocuments</string>
+    </array>
+    ```
+    
+    Services:
+    - `CloudKit`: CloudKit database access
+    - `CloudDocuments`: iCloud Drive
+  </Accordion>
+
+  <Accordion icon="database" title="com.apple.developer.icloud-container-identifiers">
+    Lists iCloud containers the app can access.
+    
+    ```xml
+    <key>com.apple.developer.icloud-container-identifiers</key>
+    <array>
+        <string>iCloud.com.company.appname</string>
+    </array>
+    ```
+  </Accordion>
+
+  <Accordion icon="box" title="com.apple.developer.ubiquity-container-identifiers">
+    Ubiquity container identifiers for document storage.
+    
+    ```xml
+    <key>com.apple.developer.ubiquity-container-identifiers</key>
+    <array>
+        <string>iCloud.com.company.appname</string>
+    </array>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Network & Communication
+
+<AccordionGroup>
+  <Accordion icon="wifi" title="com.apple.developer.networking.wifi-info">
+    Access to WiFi network information.
+    
+    ```xml
+    <key>com.apple.developer.networking.wifi-info</key>
+    <true/>
+    ```
+    
+    Allows reading WiFi SSID and BSSID.
+  </Accordion>
+
+  <Accordion icon="network-wired" title="com.apple.developer.networking.vpn.api">
+    Create and manage VPN configurations.
+    
+    ```xml
+    <key>com.apple.developer.networking.vpn.api</key>
+    <array>
+        <string>allow-vpn</string>
+    </array>
+    ```
+    
+    Required for VPN apps using NetworkExtension framework.
+  </Accordion>
+
+  <Accordion icon="signal" title="com.apple.developer.networking.multipath">
+    Use Multipath TCP for simultaneous WiFi and cellular connections.
+    
+    ```xml
+    <key>com.apple.developer.networking.multipath</key>
+    <true/>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Push Notifications & Background Modes
+
+<AccordionGroup>
+  <Accordion icon="bell" title="aps-environment">
+    Enables Apple Push Notification service.
+    
+    ```xml
+    <key>aps-environment</key>
+    <string>production</string>
+    ```
+    
+    Values:
+    - `development`: For development/testing
+    - `production`: For App Store releases
+  </Accordion>
+
+  <Accordion icon="clock" title="com.apple.developer.associated-domains">
+    Associates app with web domains for universal links, handoff, etc.
+    
+    ```xml
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>applinks:example.com</string>
+        <string>webcredentials:example.com</string>
+    </array>
+    ```
+    
+    <Tip>
+    Examining associated domains reveals web services and deep linking capabilities.
+    </Tip>
+  </Accordion>
+</AccordionGroup>
+
+### HealthKit & SiriKit
+
+<AccordionGroup>
+  <Accordion icon="heart" title="com.apple.developer.healthkit">
+    Access to HealthKit data.
+    
+    ```xml
+    <key>com.apple.developer.healthkit</key>
+    <true/>
+    <key>com.apple.developer.healthkit.access</key>
+    <array/>
+    ```
+  </Accordion>
+
+  <Accordion icon="microphone" title="com.apple.developer.siri">
+    Siri integration capabilities.
+    
+    ```xml
+    <key>com.apple.developer.siri</key>
+    <true/>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Apple Pay & Wallet
+
+<AccordionGroup>
+  <Accordion icon="credit-card" title="com.apple.developer.in-app-payments">
+    Apple Pay entitlements.
+    
+    ```xml
+    <key>com.apple.developer.in-app-payments</key>
+    <array>
+        <string>merchant.com.company.appname</string>
+    </array>
+    ```
+  </Accordion>
+
+  <Accordion icon="wallet" title="com.apple.developer.pass-type-identifiers">
+    Wallet pass type identifiers.
+    
+    ```xml
+    <key>com.apple.developer.pass-type-identifiers</key>
+    <array>
+        <string>pass.com.company.appname</string>
+    </array>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Inter-App Communication
+
+<AccordionGroup>
+  <Accordion icon="share-nodes" title="com.apple.developer.shared-with-you">
+    Shared with You framework integration.
+    
+    ```xml
+    <key>com.apple.developer.shared-with-you</key>
+    <true/>
+    ```
+  </Accordion>
+
+  <Accordion icon="right-left" title="com.apple.developer.usernotifications.communication">
+    Communication notifications (calls, messages).
+    
+    ```xml
+    <key>com.apple.developer.usernotifications.communication</key>
+    <true/>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Security-Critical Entitlements
+
+Some entitlements have significant security implications:
+
+<Warning>
+These entitlements are heavily scrutinized during App Review and should raise red flags during reverse engineering:
+</Warning>
+
+<Tabs>
+  <Tab title="Task Inspection">
+    **com.apple.system-task-ports** or **task_for_pid-allow**
+    
+    Allows reading/writing memory of other processes - extremely dangerous.
+    
+    ```xml
+    <key>task_for_pid-allow</key>
+    <true/>
+    ```
+    
+    Only granted to:
+    - Apple's own system apps
+    - Debugging tools on jailbroken devices
+    - Never in App Store apps
+  </Tab>
+  
+  <Tab title="Private APIs">
+    **com.apple.private.*** entitlements
+    
+    These grant access to private Apple frameworks and APIs.
+    
+    ```xml
+    <key>com.apple.private.security.container-required</key>
+    <false/>
+    ```
+    
+    - Only available to Apple
+    - Presence indicates jailbreak tweak or system modification
+    - Useful for understanding system app behavior
+  </Tab>
+  
+  <Tab title="Sandbox Exceptions">
+    **com.apple.security.temporary-exception.***
+    
+    Temporary exceptions to App Sandbox restrictions.
+    
+    ```xml
+    <key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+    <array>
+        <string>/specific/path/</string>
+    </array>
+    ```
+    
+    Rarely approved, requires strong justification.
+  </Tab>
+</Tabs>
+
+## Extracting Entitlements
+
+### From a Running App
+
+<CodeGroup>
+```bash Using codesign
+# Extract from installed app
+codesign -d --entitlements :- /path/to/MyApp.app/MyApp
+
+# Save to file
+codesign -d --entitlements entitlements.xml MyApp.app
+```
+
+```bash Using ldid (jailbreak)
+# On jailbroken device
+ldid -e /var/containers/Bundle/Application/.../MyApp.app/MyApp
+```
+
+```bash Using jtool2
+# Advanced extraction with metadata
+jtool2 --ent MyApp.app/MyApp
+```
+</CodeGroup>
+
+### From an IPA File
+
+<Steps>
+  <Step title="Extract IPA">
+    ```bash
+    unzip MyApp.ipa -d MyApp_extracted/
+    cd MyApp_extracted/Payload/MyApp.app/
+    ```
+  </Step>
+  
+  <Step title="Extract from binary">
+    ```bash
+    codesign -d --entitlements :- MyApp
+    ```
+  </Step>
+  
+  <Step title="Extract from provisioning profile">
+    ```bash
+    security cms -D -i embedded.mobileprovision | \
+      plutil -extract Entitlements xml1 -o - -
+    ```
+  </Step>
+</Steps>
+
+### Comparing Entitlements
+
+```bash
+# Extract from binary
+codesign -d --entitlements binary_ent.xml MyApp
+
+# Extract from profile
+security cms -D -i MyApp.app/embedded.mobileprovision | \
+  plutil -extract Entitlements xml1 -o profile_ent.xml -
+
+# Compare
+diff binary_ent.xml profile_ent.xml
+```
+
+<Note>
+Entitlements in the binary and provisioning profile should match. Discrepancies can indicate tampering or signing issues.
+</Note>
+
+## Security Implications for Reverse Engineering
+
+### Detection Vectors
+
+<CardGroup cols={2}>
+  <Card title="Debug Detection" icon="bug">
+    Check for `get-task-allow` to detect debug builds
+  </Card>
+  
+  <Card title="Shared Data" icon="folder">
+    App groups reveal data sharing between apps
+  </Card>
+  
+  <Card title="Network Access" icon="wifi">
+    Networking entitlements show communication capabilities
+  </Card>
+  
+  <Card title="Deep Links" icon="link">
+    Associated domains expose URL schemes and web integration
+  </Card>
+</CardGroup>
+
+### Runtime Checks
+
+Apps can verify their own entitlements at runtime:
+
+```swift
+import Security
+
+func hasEntitlement(_ entitlement: String) -> Bool {
+    let task = SecTaskCreateFromSelf(nil)
+    guard let task = task else { return false }
+    
+    let value = SecTaskCopyValueForEntitlement(task, entitlement as CFString, nil)
+    return value != nil
+}
+
+// Check for debugging
+if hasEntitlement("get-task-allow") {
+    print("Warning: Running with debug entitlement")
+}
+```
+
+### Entitlement Fuzzing
+
+Security researchers may attempt to:
+- Add entitlements not in provisioning profile
+- Test undocumented private entitlements
+- Discover privilege escalation vectors
+
+<Warning>
+On non-jailbroken devices, invalid entitlements will prevent the app from launching. iOS strictly enforces entitlement validation.
+</Warning>
+
+## Practical Examples
+
+### Example 1: Analyze Sample App Entitlements
+
+```bash
+# Extract example IPA
+unzip ~/workspace/source/ObfuscatedAppExamples/ObjectiveSwizzling.ipa -d /tmp/swizzle/
+cd /tmp/swizzle/Payload/*.app/
+
+# Extract entitlements from binary
+codesign -d --entitlements :- ObjectiveSwizzling > entitlements.xml
+
+# View formatted
+cat entitlements.xml | plutil -p -
+
+# Check for debug capability
+grep "get-task-allow" entitlements.xml
+
+# List keychain access groups
+grep -A 5 "keychain-access" entitlements.xml
+```
+
+### Example 2: Identify Shared Capabilities
+
+```bash
+# Find apps with same app group
+for app in /var/containers/Bundle/Application/*/*.app; do
+    echo "Checking $app"
+    codesign -d --entitlements :- "$app/$(basename "${app%.app}")" 2>/dev/null | \
+      grep "application-groups" -A 3
+done
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Code Signing" icon="shield" href="/fundamentals/code-signing">
+    Learn how entitlements are embedded in signatures.
+  </Card>
+  
+  <Card title="Runtime Analysis" icon="play">
+    Discover how to bypass entitlement checks at runtime.
+  </Card>
+  
+  <Card title="IPA Files" icon="file-zipper" href="/fundamentals/ipa-files">
+    Extract and inspect entitlements from IPA files.
+  </Card>
+  
+  <Card title="Security Testing" icon="shield-check">
+    Test app security based on entitlement configuration.
+  </Card>
+</CardGroup>

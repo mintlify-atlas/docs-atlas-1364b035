@@ -1,0 +1,511 @@
+---
+title: Setup Guide
+description: Complete guide to setting up your iOS reverse engineering environment with Ghidra and custom scripts
+---
+
+## Environment Setup
+
+This guide will walk you through setting up a complete iOS reverse engineering environment, from installing Ghidra to configuring the custom scripts from this repository.
+
+<Note>
+  Before proceeding, ensure you've reviewed the [prerequisites](/prerequisites) and have the necessary background knowledge and software installed.
+</Note>
+
+## Installing Ghidra
+
+Ghidra is your primary tool for static analysis of iOS binaries.
+
+<Steps>
+  <Step title="Install Java">
+    Ghidra requires Java 11 or later.
+    
+    **Verify Java installation:**
+    ```bash
+    java -version
+    ```
+    
+    If Java is not installed, download from [Adoptium.net](https://adoptium.net/) or use your package manager:
+    
+    <Tabs>
+      <Tab title="macOS">
+        ```bash
+        brew install openjdk@17
+        ```
+      </Tab>
+      <Tab title="Linux">
+        ```bash
+        sudo apt update
+        sudo apt install openjdk-17-jdk
+        ```
+      </Tab>
+      <Tab title="Windows">
+        Download and install from [Adoptium.net](https://adoptium.net/)
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Download Ghidra">
+    Download the latest stable release from the official website:
+    
+    [Download Ghidra →](https://ghidra-sre.org/)
+    
+    Extract the archive to your preferred location:
+    ```bash
+    unzip ghidra_*.zip
+    cd ghidra_*
+    ```
+  </Step>
+
+  <Step title="Launch Ghidra">
+    Start Ghidra to verify installation:
+    
+    <Tabs>
+      <Tab title="macOS/Linux">
+        ```bash
+        ./ghidraRun
+        ```
+      </Tab>
+      <Tab title="Windows">
+        ```cmd
+        ghidraRun.bat
+        ```
+      </Tab>
+    </Tabs>
+    
+    The Ghidra project window should appear.
+  </Step>
+</Steps>
+
+## Installing Swift Demangler
+
+The Swift Name Demangler script requires Swift to be installed on your system.
+
+<Tabs>
+  <Tab title="macOS">
+    **Swift comes pre-installed with Xcode**
+    
+    If you have Xcode installed, you already have Swift:
+    ```bash
+    xcrun swift-demangle --version
+    ```
+    
+    If not installed, install Xcode Command Line Tools:
+    ```bash
+    xcode-select --install
+    ```
+  </Tab>
+
+  <Tab title="Linux">
+    **Install Swift from official sources**
+    
+    For Ubuntu/Debian:
+    ```bash
+    # Install dependencies
+    sudo apt-get install clang libpython2.7 libpython2.7-dev
+    
+    # Download Swift (adjust version as needed)
+    wget https://download.swift.org/swift-5.9-release/ubuntu2004/swift-5.9-RELEASE/swift-5.9-RELEASE-ubuntu20.04.tar.gz
+    
+    # Extract
+    tar xzf swift-5.9-RELEASE-ubuntu20.04.tar.gz
+    
+    # Add to PATH
+    export PATH=/path/to/swift-5.9-RELEASE-ubuntu20.04/usr/bin:"$PATH"
+    ```
+    
+    Verify installation:
+    ```bash
+    swift-demangle --version
+    ```
+    
+    <Tip>
+      Add the Swift PATH export to your `~/.bashrc` or `~/.zshrc` to make it permanent.
+    </Tip>
+  </Tab>
+
+  <Tab title="Windows">
+    **Install Swift on Windows**
+    
+    Download the official Swift installer from [swift.org](https://swift.org/download/).
+    
+    After installation, verify:
+    ```cmd
+    swift-demangle --version
+    ```
+    
+    <Warning>
+      The SwiftNameDemangler.py script may require modifications for Windows paths. Consider using WSL2 for better compatibility.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Getting the Repository Scripts
+
+Clone or download the iOS Reverse Engineering repository to access the Ghidra scripts.
+
+<Steps>
+  <Step title="Clone the Repository">
+    ```bash
+    git clone https://github.com/LaurieWired/iOS_Reverse_Engineering.git
+    cd iOS_Reverse_Engineering
+    ```
+    
+    The repository contains:
+    - `SwiftNameDemangler.py` - Demangles Swift symbols
+    - `SwizzlingDetector.py` - Detects method swizzling
+    - `ObfuscatedAppExamples/` - Example IPA files
+  </Step>
+
+  <Step title="Locate Ghidra Scripts Directory">
+    Create or locate your Ghidra scripts directory:
+    
+    **Default locations:**
+    - macOS/Linux: `~/ghidra_scripts/`
+    - Windows: `%USERPROFILE%\ghidra_scripts\`
+    
+    Or set a custom location in Ghidra: **Window → Script Manager → Script Directories**
+  </Step>
+
+  <Step title="Copy Scripts to Ghidra">
+    Copy the Python scripts to your Ghidra scripts directory:
+    
+    ```bash
+    cp SwiftNameDemangler.py ~/ghidra_scripts/
+    cp SwizzlingDetector.py ~/ghidra_scripts/
+    ```
+    
+    In Ghidra's Script Manager, click the refresh button to load the new scripts.
+  </Step>
+</Steps>
+
+## Getting Example IPA Files
+
+The repository includes example iOS applications demonstrating various obfuscation techniques.
+
+<CardGroup cols={3}>
+  <Card title="NoTampering.ipa" icon="circle-check">
+    Baseline application without obfuscation. Use this to understand normal iOS binary structure.
+  </Card>
+  
+  <Card title="ObjectiveSwizzling.ipa" icon="shuffle">
+    Demonstrates Objective-C method swizzling. Perfect for testing the SwizzlingDetector script.
+  </Card>
+  
+  <Card title="ControlFlowFlattening.ipa" icon="diagram-project">
+    Shows control flow obfuscation. Useful for understanding advanced obfuscation techniques.
+  </Card>
+</CardGroup>
+
+The IPA files are located in the `ObfuscatedAppExamples/` directory of the repository.
+
+## Extracting and Loading IPA Files
+
+IPA files are essentially ZIP archives containing the iOS application bundle.
+
+<Steps>
+  <Step title="Extract the IPA">
+    ```bash
+    # Create a working directory
+    mkdir -p ~/ios-re-workspace
+    cd ~/ios-re-workspace
+    
+    # Copy an example IPA
+    cp /path/to/iOS_Reverse_Engineering/ObfuscatedAppExamples/ObjectiveSwizzling.ipa .
+    
+    # Extract the IPA
+    unzip ObjectiveSwizzling.ipa -d ObjectiveSwizzling
+    ```
+  </Step>
+
+  <Step title="Locate the Mach-O Binary">
+    Navigate to the app bundle and find the executable:
+    
+    ```bash
+    cd ObjectiveSwizzling/Payload/*.app
+    ls -la
+    ```
+    
+    The main executable typically has the same name as the app (without extension).
+    
+    <Tip>
+      You can also examine the `Info.plist` file to find the executable name under the `CFBundleExecutable` key.
+    </Tip>
+  </Step>
+
+  <Step title="Import into Ghidra">
+    **In Ghidra:**
+    
+    1. Create a new project: **File → New Project**
+    2. Select **Non-Shared Project** and choose a location
+    3. Import the binary: **File → Import File**
+    4. Navigate to and select the Mach-O executable
+    5. Ghidra will auto-detect the format as Mach-O
+    6. Click **OK** to import with default settings
+  </Step>
+
+  <Step title="Analyze the Binary">
+    After import, double-click the binary to open the CodeBrowser.
+    
+    Ghidra will prompt you to analyze:
+    1. Click **Yes** when asked to analyze
+    2. Keep default analysis options selected
+    3. Click **Analyze**
+    
+    <Warning>
+      Analysis may take several minutes for large binaries. Let it complete before running scripts.
+    </Warning>
+  </Step>
+</Steps>
+
+## Using the Ghidra Scripts
+
+Now that your environment is set up, learn how to use the custom scripts.
+
+### Swift Name Demangler
+
+This script automatically renames mangled Swift symbols to human-readable names.
+
+<Steps>
+  <Step title="Open Script Manager">
+    In Ghidra's CodeBrowser: **Window → Script Manager**
+    
+    Or press **Ctrl+Shift+E** (Windows/Linux) or **Cmd+Shift+E** (macOS)
+  </Step>
+
+  <Step title="Find SwiftNameDemangler.py">
+    Use the filter box to search for "Swift" or browse the script list.
+    
+    The script should appear with:
+    - **Category:** Swift
+    - **Author:** LaurieWired
+  </Step>
+
+  <Step title="Run the Script">
+    Double-click the script or select it and click the **Run** button.
+    
+    **What it does:**
+    ```python
+    # The script performs two main operations:
+    
+    # 1. Demangle function names
+    for func in currentProgram.getFunctionManager().getFunctions(True):
+        demangled_name = demangle_swift_name(func.getName())
+        cleaned_name = clean_demangled_name(demangled_name)
+        
+        if cleaned_name != func.getName():
+            # Sets new function name and preserves original in comment
+            func.setComment("Original: {}\nDemangled: {}".format(
+                func.getName(), demangled_name))
+            func.setName(cleaned_name, SourceType.USER_DEFINED)
+    
+    # 2. Demangle labels (symbols)
+    for symbol in currentProgram.getSymbolTable().getAllSymbols(True):
+        if symbol.getSymbolType() == SymbolType.LABEL:
+            # Similar demangling process for labels
+            ...
+    ```
+  </Step>
+
+  <Step title="Review Results">
+    The script outputs progress to the console:
+    ```
+    Renaming functions
+    Original: $s10MyApp4UserC4nameSSvg, New: MyApp.User.name.getter
+    Original: $s10MyApp4UserC3ageSSvg, New: MyApp.User.age.getter
+    
+    Renaming labels. May take some time...
+    Original: $sSS21_builtinStringLiteral..., New: Swift.String._builtinStringLiteral
+    ```
+    
+    <Note>
+      For large applications, label demangling may take several minutes. The script preserves original mangled names in comments.
+    </Note>
+  </Step>
+</Steps>
+
+### Swizzling Detector
+
+This script detects method swizzling by finding references to runtime manipulation functions.
+
+<Steps>
+  <Step title="Open Script Manager">
+    **Window → Script Manager** or press **Ctrl+Shift+E** / **Cmd+Shift+E**
+  </Step>
+
+  <Step title="Run SwizzlingDetector.py">
+    Find and double-click the **SwizzlingDetector.py** script.
+    
+    **Detection logic:**
+    ```python
+    # The script searches for these swizzling-related methods:
+    swizzling_methods = [
+        "method_exchangeImplementations",
+        "class_getInstanceMethod",
+        "class_getClassMethod",
+        "method_setImplementation"
+    ]
+    
+    # Then finds all references to these methods
+    for swizzling_symbol in swizzling_symbols:
+        references = currentProgram.getReferenceManager()
+            .getReferencesTo(swizzling_symbol.getAddress())
+        
+        # Prints location of each reference
+        for ref in references:
+            print("Address: {}".format(ref.getFromAddress()))
+    ```
+  </Step>
+
+  <Step title="Analyze Results">
+    **If swizzling is detected:**
+    ```
+    Swizzling method method_exchangeImplementations located at address 100004a20, with references:
+    Address: 100003f44
+    Address: 100004128
+    ```
+    
+    Navigate to these addresses in Ghidra to examine the swizzling implementation.
+    
+    **If no swizzling found:**
+    ```
+    No swizzling found
+    ```
+    
+    <Tip>
+      Test this script with `ObjectiveSwizzling.ipa` from the examples to see it in action.
+    </Tip>
+  </Step>
+
+  <Step title="Investigate Swizzling Locations">
+    For each reference address:
+    1. Click **Navigation → Go To...** (or press **G**)
+    2. Enter the address
+    3. Examine the surrounding code to understand what methods are being swizzled
+    
+    Look for patterns like:
+    - Original method being stored
+    - New implementation being set
+    - Reason for the swizzling (logging, modification, etc.)
+  </Step>
+</Steps>
+
+## Workflow Example
+
+Putting it all together with a complete analysis workflow:
+
+<Steps>
+  <Step title="Extract and Import">
+    ```bash
+    # Extract IPA
+    unzip ObjectiveSwizzling.ipa -d ObjectiveSwizzling
+    cd ObjectiveSwizzling/Payload/*.app
+    
+    # Note the executable name
+    ls -la
+    ```
+    
+    Import the executable into a new Ghidra project and run auto-analysis.
+  </Step>
+
+  <Step title="Demangle Swift Symbols">
+    Run **SwiftNameDemangler.py** to make the binary more readable.
+    
+    Wait for completion, then browse the function list to see demangled names.
+  </Step>
+
+  <Step title="Detect Runtime Manipulation">
+    Run **SwizzlingDetector.py** to find any swizzling.
+    
+    Take note of all reference addresses.
+  </Step>
+
+  <Step title="Manual Analysis">
+    Navigate to interesting functions:
+    - Entry point (`main` or iOS lifecycle methods)
+    - Swizzling implementations
+    - Suspicious or obfuscated functions
+    
+    Use Ghidra's decompiler to understand the logic.
+  </Step>
+
+  <Step title="Document Findings">
+    Use Ghidra's bookmarking and commenting features:
+    - Add bookmarks for key locations
+    - Write comments explaining complex logic
+    - Create function signatures for unknown functions
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Swift Demangler Not Working" icon="triangle-exclamation">
+    **Symptoms:** Script fails or doesn't demangle names
+    
+    **Solutions:**
+    - Verify Swift is installed: `swift-demangle --version` (or `xcrun swift-demangle --version` on macOS)
+    - Check the script is using the correct command for your OS
+    - On Linux, ensure Swift is in your PATH
+    - Try running the demangler manually to test:
+      ```bash
+      echo '$s10MyApp4UserC' | swift-demangle
+      ```
+  </Accordion>
+
+  <Accordion title="Scripts Not Appearing in Ghidra" icon="file-slash">
+    **Symptoms:** Scripts don't show in Script Manager
+    
+    **Solutions:**
+    - Verify scripts are in the correct directory
+    - Click the **Refresh** button in Script Manager
+    - Check **Window → Script Manager → Script Directories** for correct path
+    - Ensure scripts have `.py` extension
+  </Accordion>
+
+  <Accordion title="Analysis Takes Too Long" icon="clock">
+    **Symptoms:** Ghidra analysis or scripts run for hours
+    
+    **Solutions:**
+    - For initial analysis, disable some analyzers if binary is large
+    - SwiftNameDemangler can take 10-30 minutes for large apps (this is normal)
+    - Increase Ghidra's memory allocation in `ghidraRun` or `support/launch.properties`
+    - Close other applications to free up system resources
+  </Accordion>
+
+  <Accordion title="Can't Find Mach-O Binary in IPA" icon="magnifying-glass">
+    **Symptoms:** IPA extracts but can't find executable
+    
+    **Solutions:**
+    - Check `Payload/*.app/Info.plist` for `CFBundleExecutable` value
+    - Look for files without extensions in the `.app` directory
+    - Use `file` command to identify Mach-O files:
+      ```bash
+      file Payload/*.app/*
+      ```
+    - The executable is typically the largest file in the app bundle
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Explore Example IPAs" icon="flask">
+    Try analyzing all three example applications to practice with different obfuscation techniques
+  </Card>
+  
+  <Card title="Customize Scripts" icon="code">
+    Modify the provided scripts to suit your specific analysis needs or create new ones
+  </Card>
+  
+  <Card title="Check the Wiki" icon="book-open" href="https://github.com/LaurieWired/iOS_Reverse_Engineering/wiki/iOS-RE-Reference">
+    Read detailed guides on iOS reverse engineering techniques and concepts
+  </Card>
+  
+  <Card title="Join the Community" icon="users">
+    Follow [@lauriewired](https://twitter.com/lauriewired) and contribute to the project on GitHub
+  </Card>
+</CardGroup>
+
+<Warning>
+  Always ensure you have proper authorization before reverse engineering any iOS application. These tools are for educational and security research purposes only.
+</Warning>

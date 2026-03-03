@@ -1,0 +1,628 @@
+---
+title: 'IDA Pro'
+description: 'Using IDA Pro for iOS reverse engineering'
+---
+
+IDA Pro (Interactive DisAssembler Professional) is the industry-standard commercial reverse engineering platform. With its powerful Hex-Rays decompiler and extensive plugin ecosystem, it's the tool of choice for professional iOS security researchers.
+
+## Overview
+
+IDA Pro offers unmatched capabilities for iOS reverse engineering:
+- Best-in-class decompiler (Hex-Rays)
+- Comprehensive ARM64/ARM architecture support
+- Extensive plugin ecosystem
+- Powerful scripting with Python and IDC
+- Team collaboration features (IDA Teams)
+- Active development and support
+
+<Warning>
+  IDA Pro is expensive ($1,000+ for a commercial license). Consider whether your needs justify the cost versus free alternatives like Ghidra.
+</Warning>
+
+## Setting Up IDA for iOS
+
+<Steps>
+  <Step title="Acquire IDA Pro">
+    <Tabs>
+      <Tab title="Commercial">
+        - Purchase from [Hex-Rays website](https://hex-rays.com/ida-pro/)
+        - IDA Pro license ($1,879 USD)
+        - Hex-Rays ARM64 Decompiler add-on required for iOS ($2,999 USD)
+        - Total: ~$4,878 for full iOS capability
+      </Tab>
+      
+      <Tab title="Educational">
+        - Students can get significant discounts
+        - Some universities have site licenses
+        - Check with your institution
+      </Tab>
+      
+      <Tab title="Alternative">
+        - IDA Free (limited features, no decompiler)
+        - Good for learning, not production work
+        - Download from Hex-Rays website
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Install Essential Plugins">
+    ```bash
+    # Create plugins directory if it doesn't exist
+    mkdir -p ~/.idapro/plugins
+    
+    # Clone essential iOS plugins
+    cd ~/.idapro/plugins
+    
+    # Class-dump for IDA
+    git clone https://github.com/AloneMonkey/frida-ios-dump
+    
+    # Keypatch for patching
+    git clone https://github.com/keystone-engine/keypatch
+    ```
+  </Step>
+  
+  <Step title="Configure for iOS Analysis">
+    Edit `ida.cfg` or use GUI options:
+    
+    ```ini
+    // Increase undo history
+    UNDO_BUFSIZE = 1000
+    
+    // Better ARM64 analysis
+    ARM_DEFAULT_ARCH = 8
+    
+    // Enable decompiler by default
+    DECOMPILE_AT_STARTUP = YES
+    ```
+  </Step>
+</Steps>
+
+## Loading iOS Binaries
+
+<Steps>
+  <Step title="Extract the Binary">
+    <Tabs>
+      <Tab title="From IPA">
+        ```bash
+        # Unzip IPA file
+        unzip YourApp.ipa -d extracted
+        
+        # Locate binary
+        cd extracted/Payload/YourApp.app/
+        
+        # Check if encrypted
+        otool -l YourApp | grep cryptid
+        # cryptid 1 = encrypted (need to decrypt first)
+        # cryptid 0 = ready to analyze
+        ```
+      </Tab>
+      
+      <Tab title="From Device">
+        ```bash
+        # SSH to jailbroken device
+        ssh root@<device-ip>
+        
+        # Find app
+        find /var/containers/Bundle/Application -name "YourApp.app"
+        
+        # Decrypt with frida-ios-dump
+        frida-ios-dump -H <device-ip> -u <bundle-id>
+        
+        # Download decrypted IPA
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Load in IDA Pro">
+    1. File → Open (or drag and drop binary into IDA)
+    2. IDA will detect it as a Mach-O ARM64 binary
+    3. Accept default settings or customize:
+       - Load resources: Enable for app resources
+       - Create segments: Enable all
+       - Kernel options: Usually not needed for iOS apps
+  </Step>
+  
+  <Step title="Initial Analysis">
+    IDA will automatically:
+    - Parse Mach-O headers
+    - Identify entry points
+    - Extract Objective-C runtime information
+    - Build cross-references
+    - Apply FLIRT signatures
+    
+    <Note>
+      Analysis time varies: 5-30 minutes for typical iOS apps
+    </Note>
+  </Step>
+</Steps>
+
+## Essential Plugins and Extensions
+
+### Must-Have Plugins
+
+<Tabs>
+  <Tab title="Keypatch">
+    **Binary patching directly in IDA**
+    
+    ```python
+    # Install Keypatch
+    cd ~/.idapro/plugins
+    git clone https://github.com/keystone-engine/keypatch
+    
+    # Install Keystone engine
+    pip install keystone-engine
+    ```
+    
+    Usage:
+    1. Right-click instruction → Keypatch → Patch
+    2. Enter new assembly code
+    3. Apply patch
+    4. Edit → Patch program → Apply patches to input file
+  </Tab>
+  
+  <Tab title="Class-Dump">
+    **Enhanced Objective-C class extraction**
+    
+    ```python
+    # Automatically extracts:
+    # - Class hierarchies
+    # - Method signatures
+    # - Properties
+    # - Protocols
+    
+    # Usage: File → Script file → class-dump.py
+    ```
+    
+    Output:
+    ```objectivec
+    @interface LoginViewController : UIViewController
+    @property (nonatomic, strong) UITextField *usernameField;
+    @property (nonatomic, strong) UITextField *passwordField;
+    - (void)loginButtonTapped:(id)arg1;
+    - (BOOL)validateInput;
+    @end
+    ```
+  </Tab>
+  
+  <Tab title="IDA-ObjC">
+    **Improved Objective-C support**
+    
+    ```bash
+    cd ~/.idapro/plugins
+    git clone https://github.com/zxgio/ida_objc
+    ```
+    
+    Features:
+    - Better method name reconstruction
+    - Automatic type propagation
+    - Enhanced cross-references
+  </Tab>
+  
+  <Tab title="Diaphora">
+    **Binary diffing for comparing versions**
+    
+    ```bash
+    cd ~/.idapro/plugins
+    git clone https://github.com/joxeankoret/diaphora
+    ```
+    
+    Use cases:
+    - Compare app versions to find security patches
+    - Identify changes between iOS versions
+    - Track vulnerability fixes
+  </Tab>
+</Tabs>
+
+### Scripting Plugins
+
+<CodeGroup>
+```python IDAPython - Find Jailbreak Checks
+import idaapi
+import idautils
+import idc
+
+# Suspicious strings indicating jailbreak detection
+jb_strings = [
+    "/Applications/Cydia.app",
+    "/bin/bash",
+    "/usr/sbin/sshd",
+    "/etc/apt",
+    "cydia://"
+]
+
+print("[*] Searching for jailbreak detection...")
+for s in idautils.Strings():
+    for jb in jb_strings:
+        if jb in str(s):
+            print(f"\n[+] Found: {s}")
+            print(f"    Address: {hex(s.ea)}")
+            
+            # Find cross-references
+            for xref in idautils.XrefsTo(s.ea):
+                func = idaapi.get_func(xref.frm)
+                if func:
+                    func_name = idc.get_func_name(func.start_ea)
+                    print(f"    Used in: {func_name} @ {hex(xref.frm)}")
+```
+
+```python IDAPython - Extract API Endpoints
+import idautils
+import re
+
+endpoints = set()
+pattern = re.compile(r'https?://[^\s"\']+')
+
+for s in idautils.Strings():
+    matches = pattern.findall(str(s))
+    for match in matches:
+        endpoints.add(match)
+
+print("[*] API Endpoints Found:")
+for endpoint in sorted(endpoints):
+    print(f"  {endpoint}")
+
+print(f"\n[*] Total unique endpoints: {len(endpoints)}")
+```
+
+```python IDAPython - Rename Swift Functions
+import subprocess
+import idautils
+import idc
+
+def demangle_swift(mangled):
+    try:
+        result = subprocess.run(
+            ['swift-demangle'],
+            input=mangled.encode(),
+            capture_output=True
+        )
+        return result.stdout.decode().strip()
+    except:
+        return mangled
+
+print("[*] Demangling Swift symbols...")
+count = 0
+for ea in idautils.Functions():
+    name = idc.get_func_name(ea)
+    if name.startswith('_$s') or name.startswith('_$S'):
+        demangled = demangle_swift(name)
+        if demangled != name:
+            # Clean up for IDA
+            clean = demangled.split('(')[0].replace(' ', '_')
+            idc.set_name(ea, clean, idc.SN_NOWARN)
+            count += 1
+            print(f"  {name} -> {clean}")
+
+print(f"\n[*] Renamed {count} Swift functions")
+```
+</CodeGroup>
+
+## Workflow and Best Practices
+
+### Efficient Analysis Workflow
+
+<Steps>
+  <Step title="Initial Reconnaissance">
+    <AccordionGroup>
+      <Accordion title="View Imports">
+        - View → Open subviews → Imports
+        - Look for suspicious APIs:
+          - `CC_SHA256`, `CC_MD5` (crypto)
+          - `dlopen`, `dlsym` (dynamic loading)
+          - `ptrace` (anti-debugging)
+          - `sysctl` (jailbreak detection)
+      </Accordion>
+      
+      <Accordion title="Examine Strings">
+        - View → Open subviews → Strings (Shift+F12)
+        - Filter for:
+          - API endpoints (http, https)
+          - File paths
+          - Error messages
+          - Debug strings
+      </Accordion>
+      
+      <Accordion title="Review Objective-C Classes">
+        - View → Open subviews → Class Browser
+        - Explore class hierarchy
+        - Focus on interesting names (Auth, Crypto, Network, etc.)
+      </Accordion>
+    </AccordionGroup>
+  </Step>
+  
+  <Step title="Deep Dive Analysis">
+    For each target function:
+    
+    1. **View Assembly**: Understand low-level operations
+    2. **Decompile** (F5): Get pseudo-code for high-level understanding
+    3. **Analyze Data Flow**: Track variables through the function
+    4. **Check Cross-References** (X): See where function is called
+    5. **Add Comments** (;): Document your findings
+    6. **Rename Variables** (N): Make decompiled code readable
+  </Step>
+  
+  <Step title="Documentation">
+    - Use IDA's built-in database to save progress
+    - Add function comments explaining purpose
+    - Create enums and structs for data structures
+    - Use bookmarks (Alt+M) for important locations
+  </Step>
+</Steps>
+
+### Hex-Rays Decompiler Tips
+
+<Tabs>
+  <Tab title="Improving Decompilation">
+    **Set Function Types**
+    ```c
+    // Right-click function → Edit function
+    // Set correct prototype:
+    
+    // Before
+    __int64 __fastcall sub_100004A20(__int64 a1, __int64 a2)
+    
+    // After
+    bool __fastcall validateCredentials(NSString *username, NSString *password)
+    ```
+    
+    **Define Structures**
+    ```c
+    // Structures → Add struct type
+    struct UserCredentials {
+        NSString *username;
+        NSString *password;
+        bool rememberMe;
+    };
+    
+    // Apply to variables for better decompilation
+    ```
+  </Tab>
+  
+  <Tab title="Keyboard Shortcuts">
+    - `Tab` - Switch between assembly and pseudo-code
+    - `F5` - Decompile current function
+    - `N` - Rename variable/function
+    - `Y` - Change type
+    - `\` - Add comment
+    - `X` - Cross-references
+    - `G` - Go to address
+    - `Esc` - Go back
+  </Tab>
+  
+  <Tab title="Understanding Output">
+    ```c
+    // Decompiler generates C-like code
+    __int64 __fastcall -[LoginViewController loginButtonTapped:](
+        LoginViewController *self, 
+        SEL a2, 
+        id a3)
+    {
+        NSString *username = objc_msgSend(self->_usernameField, "text");
+        NSString *password = objc_msgSend(self->_passwordField, "text");
+        
+        if ( objc_msgSend(username, "length") 
+             && objc_msgSend(password, "length") )
+        {
+            return objc_msgSend(self, "validateCredentials:password:", 
+                               username, password);
+        }
+        
+        return objc_msgSend(self, "showError:", 
+                           @"Please enter credentials");
+    }
+    ```
+    
+    - Understand how Objective-C maps to C
+    - `objc_msgSend` = method call
+    - `self->_field` = property access
+  </Tab>
+</Tabs>
+
+## Advanced Techniques
+
+### Binary Patching
+
+<Steps>
+  <Step title="Identify Target">
+    Find the check you want to bypass:
+    ```asm
+    ; Jailbreak detection
+    BL      _access
+    CMP     W0, #0
+    B.NE    loc_jailbroken  ; Branch if jailbroken
+    ```
+  </Step>
+  
+  <Step title="Apply Patch">
+    Use Keypatch or manual patching:
+    ```asm
+    ; Change conditional branch to unconditional
+    B.NE    loc_jailbroken
+    ; Patch to:
+    NOP                     ; No operation, always continue
+    ```
+  </Step>
+  
+  <Step title="Export Patched Binary">
+    - Edit → Patch program → Apply patches to input file
+    - Re-sign the binary
+    - Install on device
+  </Step>
+</Steps>
+
+### Debugging Integration
+
+<CodeGroup>
+```python IDA + LLDB Workflow
+# 1. Find interesting function in IDA
+# Address: 0x100004a20
+# Function: -[LoginViewController validateCredentials:password:]
+
+# 2. Set breakpoint in LLDB
+(lldb) br s -a 0x100004a20
+(lldb) c
+
+# 3. When hit, examine in IDA
+# Use IDA to understand what happens at this address
+
+# 4. Step through in LLDB while following in IDA
+(lldb) ni  # Next instruction
+```
+
+```python Remote Debugging
+# On device (via SSH)
+debugserver *:6666 -a "YourApp"
+
+# On macOS (connect LLDB)
+lldb
+(lldb) process connect connect://device-ip:6666
+
+# Sync with IDA
+# IDA shows static analysis
+# LLDB shows runtime state
+```
+</CodeGroup>
+
+### Collaborative Analysis (IDA Teams)
+
+<Info>
+  IDA Teams enables multiple analysts to work on the same binary simultaneously with real-time synchronization.
+</Info>
+
+<Steps>
+  <Step title="Set Up IDA Teams Server">
+    ```bash
+    # Install IDA Teams
+    # Follow Hex-Rays documentation for server setup
+    ```
+  </Step>
+  
+  <Step title="Connect to Server">
+    - File → Open from IDA Teams
+    - Enter server credentials
+    - Choose or create project
+  </Step>
+  
+  <Step title="Collaborate">
+    - Changes sync automatically
+    - See other analysts' cursors in real-time
+    - Chat and comment features
+    - Version control for analysis
+  </Step>
+</Steps>
+
+## Common Use Cases
+
+<AccordionGroup>
+  <Accordion title="Finding Hardcoded Secrets">
+    ```python
+    # Search for base64 strings
+    import base64
+    import idautils
+    
+    for s in idautils.Strings():
+        try:
+            decoded = base64.b64decode(str(s))
+            if decoded.isprintable():
+                print(f"Potential secret: {str(s)}")
+                print(f"Decoded: {decoded}")
+        except:
+            pass
+    ```
+  </Accordion>
+  
+  <Accordion title="Analyzing SSL Pinning">
+    Look for:
+    - `SecTrustEvaluate` calls
+    - Certificate data in `__data` section
+    - Custom `NSURLSessionDelegate` implementations
+    
+    Patch to bypass:
+    - Force `SecTrustEvaluate` to return success
+    - NOP out certificate validation checks
+  </Accordion>
+  
+  <Accordion title="Understanding Anti-Debugging">
+    Search for:
+    - `ptrace(PT_DENY_ATTACH, 0, 0, 0)`
+    - `sysctl` calls checking for debugger
+    - Exception port manipulation
+    - Time-based detection
+    
+    Bypass by patching or Frida hooking
+  </Accordion>
+  
+  <Accordion title="Extracting Encryption Keys">
+    1. Find crypto function calls (`CCCrypt`, etc.)
+    2. Trace back to key derivation
+    3. Look for hardcoded keys or weak derivation
+    4. Set breakpoints to extract at runtime
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Save Frequently" icon="floppy-disk">
+    IDA databases can corrupt. Save often and backup important work.
+  </Card>
+  
+  <Card title="Use Meaningful Names" icon="signature">
+    Rename functions, variables, and structures as you understand them.
+  </Card>
+  
+  <Card title="Document Everything" icon="book">
+    Add comments explaining complex logic and your assumptions.
+  </Card>
+  
+  <Card title="Leverage Scripts" icon="code">
+    Automate repetitive tasks with IDAPython scripts.
+  </Card>
+  
+  <Card title="Version Control" icon="code-branch">
+    Keep IDA databases in version control for large projects.
+  </Card>
+  
+  <Card title="Combine Approaches" icon="arrows-split-up-and-left">
+    Use static analysis (IDA) + dynamic analysis (Frida/LLDB) together.
+  </Card>
+</CardGroup>
+
+## Limitations and Considerations
+
+<Warning>
+  - **Cost**: Extremely expensive for full iOS capability
+  - **Learning Curve**: Complex interface with many features
+  - **Obfuscation**: Heavily obfuscated code remains difficult
+  - **Swift**: Swift analysis is improving but still challenging
+  - **License**: Per-user licensing can be restrictive for teams
+</Warning>
+
+## Related Tools
+
+<CardGroup cols={2}>
+  <Card title="Ghidra" icon="unlock" href="/tools/ghidra">
+    Free open-source alternative to IDA
+  </Card>
+  
+  <Card title="Hopper" icon="terminal" href="/tools/hopper">
+    Affordable macOS-native alternative
+  </Card>
+  
+  <Card title="Frida" icon="code" href="/tools/frida">
+    Dynamic instrumentation companion
+  </Card>
+  
+  <Card title="LLDB" icon="bug" href="/tools/lldb">
+    Apple's debugger for runtime analysis
+  </Card>
+</CardGroup>
+
+## Resources
+
+- [Official IDA Pro Documentation](https://hex-rays.com/documentation/)
+- [Hex-Rays Blog](https://hex-rays.com/blog/)
+- [IDAPython Documentation](https://github.com/idapython/src)
+- [IDA Plugin Contest](https://hex-rays.com/contests/)
+- [Awesome IDA Plugins](https://github.com/onethawt/idaplugins-list)

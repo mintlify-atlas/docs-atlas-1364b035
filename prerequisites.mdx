@@ -1,0 +1,261 @@
+---
+title: Prerequisites
+description: Essential knowledge and skills needed before starting iOS reverse engineering
+---
+
+## Before You Begin
+
+Successful iOS reverse engineering requires a solid foundation in several technical areas. This guide outlines what you need to know before diving into the tools and techniques.
+
+<Note>
+  Don't worry if you're not an expert in all these areas. You can learn as you go, but familiarity with these concepts will significantly accelerate your progress.
+</Note>
+
+## Required Knowledge
+
+### iOS Development Basics
+
+Understanding how iOS apps are built helps you reverse engineer them more effectively.
+
+<AccordionGroup>
+  <Accordion title="iOS App Architecture" icon="sitemap">
+    **What you need to know:**
+    - How iOS applications are structured
+    - Understanding of the app bundle format
+    - Knowledge of Info.plist configuration files
+    - Familiarity with app entitlements and code signing
+    
+    **Why it matters:**
+    You'll be examining these structures when analyzing IPA files. Knowing what to expect helps you identify anomalies and interesting components.
+  </Accordion>
+
+  <Accordion title="Objective-C Fundamentals" icon="c">
+    **What you need to know:**
+    - Objective-C syntax and message passing
+    - Understanding of selectors and method signatures
+    - Knowledge of runtime features and dynamic dispatch
+    - Familiarity with common iOS frameworks (UIKit, Foundation)
+    
+    **Why it matters:**
+    Many iOS apps still use Objective-C, and even Swift apps often interact with Objective-C frameworks. Understanding the runtime is crucial for identifying swizzling and other manipulation techniques.
+  </Accordion>
+
+  <Accordion title="Swift Basics" icon="bolt">
+    **What you need to know:**
+    - Swift syntax and language features
+    - Understanding of name mangling in Swift
+    - Knowledge of Swift's ABI and calling conventions
+    - Familiarity with Swift standard library
+    
+    **Why it matters:**
+    Modern iOS apps are increasingly written in Swift. Swift uses name mangling extensively, which makes the Swift Name Demangler script essential for analysis.
+  </Accordion>
+</AccordionGroup>
+
+### Assembly Language & Binary Analysis
+
+Reverse engineering ultimately comes down to understanding compiled code.
+
+<CardGroup cols={2}>
+  <Card title="ARM64 Assembly" icon="microchip">
+    **Required Skills:**
+    - Reading ARM64 (AArch64) assembly instructions
+    - Understanding common ARM64 calling conventions
+    - Recognizing function prologues and epilogues
+    - Basic knowledge of ARM64 registers and their purposes
+    
+    All modern iOS devices use ARM64 processors, so this is non-negotiable for serious reverse engineering work.
+  </Card>
+
+  <Card title="Binary File Formats" icon="file-binary">
+    **Required Skills:**
+    - Understanding Mach-O file format structure
+    - Knowledge of executable sections (.text, .data, etc.)
+    - Familiarity with symbol tables and dynamic linking
+    - Understanding of load commands and segments
+    
+    iOS binaries use the Mach-O format, which differs from ELF (Linux) and PE (Windows) formats.
+  </Card>
+</CardGroup>
+
+### Security Concepts
+
+<Steps>
+  <Step title="Code Obfuscation Techniques">
+    Understand common obfuscation methods:
+    - Control flow flattening
+    - String encryption
+    - Symbol stripping
+    - Dead code insertion
+    
+    The example IPA files in this repository demonstrate these techniques in practice.
+  </Step>
+
+  <Step title="Runtime Manipulation">
+    Familiarize yourself with runtime modification techniques:
+    - Method swizzling (changing method implementations at runtime)
+    - Dynamic library injection
+    - Runtime hooks and interception
+    - Jailbreak detection mechanisms
+  </Step>
+
+  <Step title="Code Signing & Entitlements">
+    Understand iOS security model:
+    - How code signing works on iOS
+    - App entitlements and capabilities
+    - App sandboxing and permission model
+    - Certificate pinning and network security
+  </Step>
+</Steps>
+
+## Required Software
+
+Ensure you have the following installed before proceeding to the setup guide:
+
+### Essential Tools
+
+<CardGroup cols={2}>
+  <Card title="Ghidra" icon="ghost">
+    **Version:** Latest stable release recommended
+    
+    Free and open-source reverse engineering framework developed by the NSA. This is your primary analysis tool.
+    
+    [Download Ghidra →](https://ghidra-sre.org/)
+  </Card>
+
+  <Card title="Swift" icon="bolt">
+    **Version:** Swift 5.0 or later
+    
+    Required for the Swift Name Demangler script to function. The script uses `swift-demangle` (or `xcrun swift-demangle` on macOS).
+    
+    [Install Swift →](https://swift.org/install/)
+  </Card>
+
+  <Card title="Python" icon="python">
+    **Version:** Python 2.7 (Ghidra's Jython environment)
+    
+    Ghidra scripts run in Jython, which is based on Python 2.7. No separate installation needed if you have Ghidra.
+  </Card>
+
+  <Card title="Java" icon="java">
+    **Version:** Java 11 or later
+    
+    Required to run Ghidra. OpenJDK or Oracle JDK both work.
+    
+    [Download Java →](https://adoptium.net/)
+  </Card>
+</CardGroup>
+
+### Operating System Requirements
+
+<Tabs>
+  <Tab title="macOS">
+    **Recommended for iOS reverse engineering**
+    
+    Advantages:
+    - Native Swift tools (`xcrun swift-demangle`)
+    - Can run iOS Simulator for dynamic analysis
+    - Access to Xcode and iOS SDKs
+    - Better compatibility with iOS tooling
+    
+    **Minimum Version:** macOS 10.14 or later
+  </Tab>
+
+  <Tab title="Linux">
+    **Fully supported**
+    
+    Advantages:
+    - Excellent performance for Ghidra
+    - Strong command-line tools
+    - Easy automation and scripting
+    
+    Requirements:
+    - Install Swift separately for demangling
+    - Use `swift-demangle` command (not `xcrun`)
+    
+    **Recommended:** Ubuntu 20.04+ or similar
+  </Tab>
+
+  <Tab title="Windows">
+    **Supported with limitations**
+    
+    Considerations:
+    - Ghidra runs well on Windows
+    - Swift installation more complex
+    - Some scripts may need modification
+    - Consider using WSL2 for better compatibility
+    
+    **Minimum Version:** Windows 10
+  </Tab>
+</Tabs>
+
+## Recommended Background
+
+While not strictly required, these skills will enhance your reverse engineering capabilities:
+
+<CardGroup cols={2}>
+  <Card title="Debugging Experience" icon="bug">
+    Experience with debuggers (lldb, gdb) helps you understand program execution flow and state inspection.
+  </Card>
+
+  <Card title="Network Analysis" icon="network-wired">
+    Understanding HTTP/HTTPS, certificate pinning, and tools like Wireshark or Charles Proxy for traffic inspection.
+  </Card>
+
+  <Card title="Cryptography Basics" icon="lock">
+    Familiarity with common encryption algorithms helps identify crypto implementations in binaries.
+  </Card>
+
+  <Card title="Scripting Skills" icon="terminal">
+    Python scripting ability to customize and extend the provided Ghidra scripts for your specific needs.
+  </Card>
+</CardGroup>
+
+## Skill Assessment
+
+Use this checklist to evaluate your readiness:
+
+<Check>
+  - [ ] I can read basic ARM64 assembly code
+  - [ ] I understand how iOS apps are structured
+  - [ ] I'm familiar with either Objective-C or Swift
+  - [ ] I know what method swizzling is
+  - [ ] I understand the Mach-O file format basics
+  - [ ] I have used a disassembler or decompiler before
+  - [ ] I understand what code obfuscation is and why it's used
+  - [ ] I have Ghidra, Swift, and Java installed
+</Check>
+
+<Warning>
+  If you checked fewer than 5 items, consider spending time learning these fundamentals before proceeding. The [setup guide](/setup) assumes you have this baseline knowledge.
+</Warning>
+
+## Learning Resources
+
+If you need to strengthen your foundation:
+
+<CardGroup cols={2}>
+  <Card title="iOS RE Wiki" icon="book" href="https://github.com/LaurieWired/iOS_Reverse_Engineering/wiki/iOS-RE-Reference">
+    The comprehensive wiki contains detailed guides and reference materials
+  </Card>
+
+  <Card title="ARM64 Documentation" icon="book-open" href="https://developer.arm.com/documentation/">
+    Official ARM documentation for understanding the instruction set
+  </Card>
+
+  <Card title="Swift Internals" icon="swift" href="https://github.com/apple/swift">
+    Swift open source project to understand language internals
+  </Card>
+
+  <Card title="Ghidra Documentation" icon="file-lines" href="https://ghidra-sre.org/courses/">
+    Official Ghidra courses and documentation
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+Once you've confirmed you have the necessary prerequisites:
+
+<Card title="Proceed to Setup" icon="arrow-right" href="/setup">
+  Continue to the setup guide to configure your iOS reverse engineering environment
+</Card>

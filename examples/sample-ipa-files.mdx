@@ -1,0 +1,171 @@
+---
+title: 'Sample IPA Files'
+description: 'Collection of example iOS applications for practicing reverse engineering techniques'
+---
+
+## Overview
+
+This reference includes several sample IPA files that demonstrate common obfuscation and protection techniques used in iOS applications. These examples are designed to help you practice reverse engineering skills and test analysis tools.
+
+<Note>
+  These sample applications are for educational purposes only. Use them to practice analysis techniques in a controlled environment before tackling real-world applications.
+</Note>
+
+## Available Examples
+
+### ControlFlowFlattening.ipa
+
+**Size**: 19 KB  
+**Focus**: Control flow obfuscation
+
+This application demonstrates control flow flattening, a common obfuscation technique that makes code difficult to understand by transforming normal control flow into a state machine.
+
+**Key Features**:
+- Flattened control flow using switch statements
+- Dispatcher-based execution
+- Obfuscated branching logic
+
+**Use Cases**:
+- Learning to identify control flow flattening
+- Practicing deobfuscation techniques
+- Testing automated analysis tools
+
+[View detailed walkthrough →](/examples/control-flow-flattening-example)
+
+### NoTampering.ipa
+
+**Size**: 229 KB  
+**Focus**: Baseline reference application
+
+This is an unobfuscated reference application that serves as a baseline for comparison with the obfuscated examples. It contains the same functionality as the obfuscated versions but without any protection mechanisms.
+
+**Key Features**:
+- Clear, readable code structure
+- No obfuscation applied
+- Standard iOS application patterns
+
+**Use Cases**:
+- Understanding normal application structure
+- Comparing with obfuscated versions
+- Baseline for automated tool testing
+
+### ObjectiveSwizzling.ipa
+
+**Size**: 17 KB  
+**Focus**: Method swizzling detection
+
+This application implements Objective-C method swizzling, a runtime technique for changing method implementations. It's designed to demonstrate how swizzling appears in a binary and how to detect it.
+
+**Key Features**:
+- Method swizzling using Objective-C runtime
+- Multiple swizzling patterns
+- Both class and instance method swizzling
+
+**Use Cases**:
+- Learning to detect method swizzling
+- Testing the SwizzlingDetector script
+- Understanding runtime method replacement
+
+[View detailed walkthrough →](/examples/swizzling-example)
+
+## Getting Started
+
+<Steps>
+  <Step title="Extract the IPA">
+    IPA files are ZIP archives. Extract them to access the application bundle:
+    
+    ```bash
+    unzip ControlFlowFlattening.ipa
+    cd Payload/*.app
+    ```
+  </Step>
+  
+  <Step title="Locate the Binary">
+    The main executable is typically located at `Payload/AppName.app/AppName`:
+    
+    ```bash
+    # Check if it's a FAT binary
+    file AppName
+    
+    # List architectures
+    lipo -info AppName
+    ```
+  </Step>
+  
+  <Step title="Extract ARM64 Slice">
+    If it's a FAT binary, extract the ARM64 slice:
+    
+    ```bash
+    lipo AppName -thin arm64 -output AppName_arm64
+    ```
+  </Step>
+  
+  <Step title="Load in Ghidra">
+    Import the ARM64 binary into Ghidra:
+    - Create a new project or use an existing one
+    - Import the binary (File → Import File)
+    - Select "iOS Kernel" or "iOS ARM 64-bit" as the language
+    - Run auto-analysis
+  </Step>
+</Steps>
+
+## Analysis Workflow
+
+For each sample application, follow this general workflow:
+
+1. **Initial Analysis**
+   - Load the binary in Ghidra
+   - Run auto-analysis
+   - Review strings and imports
+
+2. **Identify Protection Mechanisms**
+   - Look for obfuscation patterns
+   - Check for anti-debugging code
+   - Identify any runtime manipulation
+
+3. **Apply Tools and Scripts**
+   - Use relevant Ghidra scripts (SwiftNameDemangler, SwizzlingDetector)
+   - Apply deobfuscation techniques
+   - Document findings
+
+4. **Compare with Baseline**
+   - Compare with NoTampering.ipa to understand the differences
+   - Identify what was obfuscated and how
+
+## File Locations
+
+All sample IPA files are located in:
+```
+~/workspace/source/ObfuscatedAppExamples/
+```
+
+## Tips for Analysis
+
+<Note>
+  Start with NoTampering.ipa to understand the normal application structure, then move to the obfuscated versions to see how protections affect the binary.
+</Note>
+
+### Control Flow Analysis
+
+- Look for large switch statements
+- Identify state variables that control execution flow
+- Trace variable assignments to understand execution order
+
+### Method Swizzling Detection
+
+- Search for Objective-C runtime imports
+- Use the SwizzlingDetector script
+- Examine references to swizzling functions
+
+### Swift Analysis
+
+- Use SwiftNameDemangler script for Swift binaries
+- Look for Swift metadata sections
+- Understand Swift calling conventions
+
+## Additional Resources
+
+- [Control Flow Flattening Example](/examples/control-flow-flattening-example)
+- [Swizzling Example](/examples/swizzling-example)
+- [Swift Name Demangler Script](/scripts/swift-name-demangler)
+- [Swizzling Detector Script](/scripts/swizzling-detector)

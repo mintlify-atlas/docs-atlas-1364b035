@@ -1,0 +1,277 @@
+---
+title: "iOS App Structure"
+description: "Understanding the structure and components of iOS application bundles"
+---
+
+## Overview
+
+iOS applications are distributed as application bundles with a `.app` extension. Understanding the internal structure of these bundles is fundamental to iOS reverse engineering, as it reveals how apps are organized, what resources they contain, and how they're configured.
+
+## App Bundle Structure
+
+An iOS app bundle is a directory with a specific structure that contains the executable binary, resources, and metadata required to run the application.
+
+<img src="/images/app_bundle_macho.png" alt="iOS App Bundle and Mach-O Structure" />
+
+### Key Components
+
+<AccordionGroup>
+  <Accordion icon="file-binary" title="Executable Binary">
+    The main executable file, typically sharing the app's name, is a Mach-O binary containing the compiled application code. This file is located at the root of the bundle.
+    
+    ```bash
+    MyApp.app/MyApp
+    ```
+    
+    The executable contains all compiled code including:
+    - Objective-C and Swift implementations
+    - C/C++ code
+    - Framework and library code (if statically linked)
+  </Accordion>
+
+  <Accordion icon="info-circle" title="Info.plist">
+    The `Info.plist` file contains essential metadata about the application including bundle identifier, version, supported devices, and required capabilities.
+    
+    <img src="/images/opened_plist.png" alt="Info.plist file opened in editor" />
+    
+    Key properties include:
+    - `CFBundleIdentifier`: Unique app identifier (e.g., `com.company.appname`)
+    - `CFBundleExecutable`: Name of the executable binary
+    - `CFBundleVersion`: Build version number
+    - `CFBundleShortVersionString`: User-facing version string
+    - `MinimumOSVersion`: Minimum iOS version required
+    - `UIDeviceFamily`: Supported device types (iPhone, iPad)
+  </Accordion>
+
+  <Accordion icon="key" title="Embedded Provisioning Profile">
+    The `embedded.mobileprovision` file contains the provisioning profile used to sign the application, including:
+    - Developer/distribution certificates
+    - Allowed device UDIDs (for development builds)
+    - App entitlements
+    - Expiration date
+    
+    ```bash
+    MyApp.app/embedded.mobileprovision
+    ```
+  </Accordion>
+
+  <Accordion icon="shield" title="Code Signature">
+    The `_CodeSignature` directory contains files that verify the integrity and authenticity of the application:
+    
+    ```bash
+    MyApp.app/_CodeSignature/CodeResources
+    ```
+    
+    The `CodeResources` file contains hashes of all files in the bundle to detect tampering.
+  </Accordion>
+</AccordionGroup>
+
+## Resources and Assets
+
+iOS apps contain various resource types that need to be understood during reverse engineering:
+
+### Asset Catalogs
+
+<CodeGroup>
+```bash Directory Structure
+MyApp.app/
+├── Assets.car           # Compiled asset catalog
+├── AppIcon60x60@2x.png  # App icons
+└── LaunchImage.png      # Launch screen assets
+```
+
+```bash Extracting Assets
+# Use asset catalog extraction tools
+acextract Assets.car -o extracted_assets/
+```
+</CodeGroup>
+
+### Localization Resources
+
+Localized strings and resources are stored in `.lproj` directories:
+
+```bash
+MyApp.app/
+├── en.lproj/
+│   ├── Localizable.strings
+│   └── Main.storyboard
+└── es.lproj/
+    ├── Localizable.strings
+    └── Main.storyboard
+```
+
+<Tip>
+Examining localization files can reveal feature names, error messages, and UI text that provide insight into app functionality.
+</Tip>
+
+### Interface Files
+
+<Tabs>
+  <Tab title="Storyboards">
+    Storyboards (`.storyboard` or `.storyboardc` when compiled) define the app's user interface and navigation flow.
+    
+    ```bash
+    MyApp.app/Base.lproj/Main.storyboardc/
+    ```
+    
+    Compiled storyboards can be inspected using tools like `ibtool` or reverse engineered to understand UI structure.
+  </Tab>
+  
+  <Tab title="NIB Files">
+    NIB files (`.nib`) are the compiled version of XIB interface files:
+    
+    ```bash
+    MyApp.app/CustomView.nib
+    ```
+    
+    These files contain serialized UI objects and can reveal view hierarchies and outlets.
+  </Tab>
+</Tabs>
+
+## Configuration Files
+
+### Property Lists
+
+Beyond `Info.plist`, apps may contain additional property list files:
+
+<CardGroup cols={2}>
+  <Card title="Settings Bundle" icon="gear">
+    `Settings.bundle` contains app preferences displayed in the iOS Settings app.
+  </Card>
+  
+  <Card title="URL Schemes" icon="link">
+    Defined in `Info.plist` under `CFBundleURLTypes`, revealing deep linking capabilities.
+  </Card>
+  
+  <Card title="Entitlements" icon="key">
+    Special permissions and capabilities defined in the code signature.
+  </Card>
+  
+  <Card title="App Transport Security" icon="shield">
+    Network security settings in `NSAppTransportSecurity` key.
+  </Card>
+</CardGroup>
+
+## Frameworks and Libraries
+
+Applications may embed private frameworks and dynamic libraries:
+
+```bash
+MyApp.app/
+├── Frameworks/
+│   ├── CustomFramework.framework/
+│   │   ├── CustomFramework (Mach-O binary)
+│   │   ├── Info.plist
+│   │   └── Resources/
+│   └── ThirdParty.framework/
+└── PlugIns/
+    └── Extension.appex/
+```
+
+<Note>
+Embedded frameworks are common in apps using third-party SDKs or modular architectures. Each framework is itself a bundle with its own Mach-O binary.
+</Note>
+
+## Inspecting App Bundles
+
+### Using Command Line Tools
+
+<Steps>
+  <Step title="Extract IPA file">
+    ```bash
+    unzip MyApp.ipa -d MyApp_extracted/
+    cd MyApp_extracted/Payload/MyApp.app/
+    ```
+  </Step>
+  
+  <Step title="List bundle contents">
+    ```bash
+    ls -la
+    ```
+  </Step>
+  
+  <Step title="Examine Info.plist">
+    ```bash
+    plutil -p Info.plist
+    # or convert to XML for easier reading
+    plutil -convert xml1 Info.plist
+    ```
+  </Step>
+  
+  <Step title="Check code signature">
+    ```bash
+    codesign -d --entitlements - MyApp
+    ```
+  </Step>
+</Steps>
+
+### Using Reverse Engineering Tools
+
+<CodeGroup>
+```bash otool
+# Display Mach-O header
+otool -h MyApp
+
+# List load commands
+otool -l MyApp
+
+# Show shared libraries
+otool -L MyApp
+```
+
+```bash class-dump
+# Extract Objective-C class information
+class-dump MyApp > headers.txt
+```
+
+```bash strings
+# Extract readable strings
+strings MyApp | grep -i "api"
+```
+</CodeGroup>
+
+## Practical Example
+
+Examining the example apps in the project:
+
+```bash
+# Extract an example IPA
+unzip ~/workspace/source/ObfuscatedAppExamples/NoTampering.ipa -d /tmp/analysis/
+
+# Navigate to app bundle
+cd /tmp/analysis/Payload/*.app/
+
+# Check bundle identifier and version
+plutil -p Info.plist | grep -E "CFBundle(Identifier|Version)"
+
+# List all resources
+find . -type f | head -20
+
+# Examine the main executable
+file NoTampering
+otool -h NoTampering
+```
+
+<Warning>
+Always work with copies of IPA files and app bundles. Modifying the original bundle will invalidate the code signature.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Mach-O Format" icon="file-binary" href="/fundamentals/mach-o-format">
+    Dive deep into the Mach-O executable binary format.
+  </Card>
+  
+  <Card title="Code Signing" icon="shield" href="/fundamentals/code-signing">
+    Learn how iOS code signing protects app integrity.
+  </Card>
+  
+  <Card title="Entitlements" icon="key" href="/fundamentals/entitlements">
+    Understand app permissions and capabilities.
+  </Card>
+  
+  <Card title="IPA Files" icon="file-zipper" href="/fundamentals/ipa-files">
+    Learn about IPA file structure and extraction.
+  </Card>
+</CardGroup>

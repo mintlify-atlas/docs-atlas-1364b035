@@ -1,0 +1,195 @@
+---
+title: 'Swizzling Detector'
+description: 'Detect and locate method swizzling in iOS applications using Ghidra'
+---
+
+## Overview
+
+The Swizzling Detector is a Ghidra script that identifies method swizzling in iOS applications. Method swizzling is a technique used to change the behavior of existing methods at runtime, commonly used for both legitimate purposes (debugging, analytics) and malicious ones (tampering, hooking).
+
+This script searches for common Objective-C runtime functions associated with swizzling and reports all references to these functions.
+
+## What is Method Swizzling?
+
+Method swizzling is an Objective-C runtime feature that allows you to swap the implementations of two methods. It's commonly implemented using these runtime functions:
+
+- `method_exchangeImplementations` - Swaps implementations of two methods
+- `class_getInstanceMethod` - Retrieves an instance method
+- `class_getClassMethod` - Retrieves a class method
+- `method_setImplementation` - Directly sets a method's implementation
+
+<Note>
+  While swizzling can be used legitimately (e.g., in debugging frameworks or analytics SDKs), it's also a common technique in malware and anti-analysis tools.
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Download the Script">
+    Download `SwizzlingDetector.py` to your Ghidra scripts directory:
+    
+    - **macOS/Linux**: `~/ghidra_scripts/`
+    - **Windows**: `%USERPROFILE%\ghidra_scripts\`
+  </Step>
+  
+  <Step title="Refresh Script Manager">
+    In Ghidra, open the Script Manager (Window → Script Manager) and click the "Refresh" button to load the new script.
+  </Step>
+</Steps>
+
+## Usage
+
+<Steps>
+  <Step title="Load Your Binary">
+    Open your iOS binary in Ghidra and complete the initial auto-analysis.
+  </Step>
+  
+  <Step title="Run the Script">
+    Open the Script Manager, search for "SwizzlingDetector" or navigate to the iOS category, and double-click to run.
+  </Step>
+  
+  <Step title="Review Results">
+    The script will output its findings to the console:
+    - If no swizzling is found, you'll see "No swizzling found"
+    - If swizzling is detected, you'll see each swizzling method and all references to it
+  </Step>
+  
+  <Step title="Investigate References">
+    Navigate to the reported addresses in Ghidra to understand the context of the swizzling:
+    - What methods are being swizzled?
+    - Where in the code does swizzling occur?
+    - Is it legitimate (SDK) or suspicious?
+  </Step>
+</Steps>
+
+## Example Output
+
+### No Swizzling Detected
+
+```
+No swizzling found
+```
+
+### Swizzling Detected
+
+```
+Swizzling method method_exchangeImplementations located at address 00100004a2c, with references:
+Address: 001000045b8
+Address: 0010000467c
+Address: 001000048a4
+
+Swizzling method class_getInstanceMethod located at address 00100004a18, with references:
+Address: 001000045a0
+Address: 001000045c4
+Address: 001000046e8
+```
+
+In this example, the app uses `method_exchangeImplementations` and `class_getInstanceMethod`, with multiple call sites for each.
+
+## Script Code
+
+```python
+#Detects whether an app is using swizzling and prints all references
+#@author LaurieWired
+#@category iOS
+
+from ghidra.program.model.symbol import SymbolType
+
+def find_swizzling():
+    # List of potential swizzling related methods
+    swizzling_methods = [
+        "method_exchangeImplementations",
+        "class_getInstanceMethod",
+        "class_getClassMethod",
+        "method_setImplementation"
+    ]
+    
+    # Find the addresses of all functions containing the substrings from swizzling_methods
+    swizzling_symbols = []
+    for symbol in currentProgram.getSymbolTable().getAllSymbols(True):
+        if symbol.getSymbolType() == SymbolType.FUNCTION and any(method in symbol.getName() for method in swizzling_methods):
+            swizzling_symbols.append(symbol)
+
+    if not swizzling_symbols:
+        print("No swizzling found")
+        return
+
+    for swizzling_symbol in swizzling_symbols:
+        # Enumerate all references to this function
+        references = list(currentProgram.getReferenceManager().getReferencesTo(swizzling_symbol.getAddress()))
+
+        if not references:
+            print("Swizzling method {} located at address {}, but had no references".format(swizzling_symbol.getName(), swizzling_symbol.getAddress()))
+            continue
+
+        print("Swizzling method {} located at address {}, with references:".format(swizzling_symbol.getName(), swizzling_symbol.getAddress()))
+        for ref in references:
+            print("Address: {}".format(ref.getFromAddress()))
+
+find_swizzling()
+```
+
+## How It Works
+
+1. **Symbol Search**: The script searches the symbol table for functions matching known swizzling method names
+2. **Reference Analysis**: For each swizzling method found, it locates all cross-references (calls to that method)
+3. **Report Generation**: Outputs the location of each swizzling method and all addresses that call it
+
+## Analysis Workflow
+
+When swizzling is detected, follow these steps to understand its purpose:
+
+<Steps>
+  <Step title="Navigate to Reference">
+    Go to each reported reference address in the Ghidra CodeBrowser.
+  </Step>
+  
+  <Step title="Analyze Context">
+    Look at the surrounding code:
+    - What class is performing the swizzling?
+    - What methods are being swizzled?
+    - When is the swizzling performed (app launch, specific trigger)?
+  </Step>
+  
+  <Step title="Identify Purpose">
+    Determine if the swizzling is:
+    - **Legitimate**: Part of a known framework (analytics, crash reporting)
+    - **Anti-debugging**: Swizzling system APIs to detect debugging
+    - **Malicious**: Hooking sensitive methods for data exfiltration
+  </Step>
+  
+  <Step title="Document Findings">
+    Add comments in Ghidra at the swizzling locations describing what's being swizzled and why.
+  </Step>
+</Steps>
+
+## Common Swizzling Patterns
+
+### Analytics SDK
+
+```objc
+// Swizzling viewDidAppear to track screen views
+Method originalMethod = class_getInstanceMethod([UIViewController class], @selector(viewDidAppear:));
+Method swizzledMethod = class_getInstanceMethod([UIViewController class], @selector(analytics_viewDidAppear:));
+method_exchangeImplementations(originalMethod, swizzledMethod);
+```
+
+### Anti-Debugging
+
+```objc
+// Swizzling debugger detection methods
+Method originalMethod = class_getInstanceMethod([NSObject class], @selector(debuggerAttached));
+Method swizzledMethod = class_getInstanceMethod([SecurityCheck class], @selector(custom_debuggerAttached));
+method_exchangeImplementations(originalMethod, swizzledMethod);
+```
+
+## Limitations
+
+- **False Negatives**: This script only detects Objective-C runtime swizzling. Swift method replacement or Fishhook-based hooking won't be detected
+- **Imported Methods**: Only detects swizzling if the runtime functions are actually imported by the binary
+- **Dynamic Loading**: Swizzling performed by dynamically loaded libraries may not be visible in the main binary
+
+## See Also
+
+- [Method Swizzling Example](/examples/swizzling-example) - Detailed walkthrough using ObjectiveSwizzling.ipa
+- [Objective-C Runtime Documentation](https://developer.apple.com/documentation/objectivec/objective-c_runtime)

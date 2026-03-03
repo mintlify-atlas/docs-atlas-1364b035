@@ -1,0 +1,715 @@
+---
+title: 'Frida'
+description: 'Dynamic instrumentation with Frida for iOS'
+---
+
+Frida is a dynamic instrumentation toolkit that allows you to inject JavaScript into native iOS applications to hook functions, trace calls, modify behavior, and bypass security controls at runtime.
+
+## Overview
+
+Frida is essential for iOS reverse engineering because it enables:
+- Runtime manipulation of iOS applications
+- Method hooking without recompilation
+- Bypassing jailbreak detection, SSL pinning, and other protections
+- Real-time monitoring and tracing
+- Rapid prototyping of security research
+
+<Info>
+  Frida operates at runtime, complementing static analysis tools like Ghidra and IDA Pro. Use both approaches together for comprehensive analysis.
+</Info>
+
+## Installing Frida
+
+<Steps>
+  <Step title="Install Frida CLI Tools">
+    <Tabs>
+      <Tab title="macOS">
+        ```bash
+        # Using pip
+        pip3 install frida-tools
+        
+        # Or using Homebrew
+        brew install frida-tools
+        
+        # Verify installation
+        frida --version
+        ```
+      </Tab>
+      
+      <Tab title="Linux">
+        ```bash
+        # Install dependencies
+        sudo apt update
+        sudo apt install python3-pip
+        
+        # Install Frida
+        pip3 install frida-tools
+        
+        # Verify
+        frida --version
+        ```
+      </Tab>
+      
+      <Tab title="Windows">
+        ```powershell
+        # Install Python 3 first from python.org
+        
+        # Install Frida
+        pip install frida-tools
+        
+        # Verify
+        frida --version
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Install Frida on iOS Device">
+    <Warning>
+      Requires a jailbroken iOS device. Frida does not work on stock iOS devices.
+    </Warning>
+    
+    ```bash
+    # Add Frida repository to Cydia/Sileo
+    # Open Cydia → Sources → Edit → Add
+    # URL: https://build.frida.re
+    
+    # Search for "Frida" and install
+    # This installs frida-server on the device
+    ```
+    
+    Or manually via SSH:
+    ```bash
+    # SSH to device
+    ssh root@<device-ip>
+    
+    # Download frida-server for your iOS version
+    wget https://github.com/frida/frida/releases/download/16.x.x/frida-server-16.x.x-ios-arm64.deb
+    
+    # Install
+    dpkg -i frida-server-16.x.x-ios-arm64.deb
+    
+    # Start frida-server
+    frida-server &
+    ```
+  </Step>
+  
+  <Step title="Verify Connection">
+    ```bash
+    # List running processes on device
+    frida-ps -U
+    
+    # Should show iOS processes like:
+    # PID  Name
+    # ---  ----
+    # 123  SpringBoard
+    # 456  Safari
+    # 789  YourApp
+    ```
+    
+    <Note>
+      `-U` flag means "USB device". Use `-H <device-ip>` for network connection.
+    </Note>
+  </Step>
+</Steps>
+
+## Hooking iOS Applications
+
+### Basic Hooking
+
+<Tabs>
+  <Tab title="Objective-C Methods">
+    ```javascript
+    // Hook a simple method
+    if (ObjC.available) {
+        // Get class reference
+        var LoginViewController = ObjC.classes.LoginViewController;
+        
+        // Hook instance method
+        var validateMethod = LoginViewController['- validateCredentials:password:'];
+        
+        Interceptor.attach(validateMethod.implementation, {
+            onEnter: function(args) {
+                // args[0] = self
+                // args[1] = selector
+                // args[2] = first argument (username)
+                // args[3] = second argument (password)
+                
+                var username = ObjC.Object(args[2]).toString();
+                var password = ObjC.Object(args[3]).toString();
+                
+                console.log("[+] validateCredentials called");
+                console.log("    Username: " + username);
+                console.log("    Password: " + password);
+            },
+            onLeave: function(retval) {
+                console.log("    Return value: " + retval);
+                
+                // Modify return value to always return true
+                retval.replace(ptr(1));
+            }
+        });
+        
+        console.log("[*] Hooked validateCredentials:password:");
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Swift Methods">
+    ```javascript
+    // Swift method names are mangled
+    // Find mangled name using: frida-trace -U -m "*[* *login*]" YourApp
+    
+    if (ObjC.available) {
+        // Example mangled Swift name
+        var className = "_TtC6MyApp19LoginViewController";
+        var methodName = "- authenticateWithUsername:password:";
+        
+        var LoginVC = ObjC.classes[className];
+        var method = LoginVC[methodName];
+        
+        Interceptor.attach(method.implementation, {
+            onEnter: function(args) {
+                console.log("[+] Swift authentication called");
+                
+                // Swift strings are more complex
+                var username = ObjC.Object(args[2]);
+                console.log("    Username: " + username);
+            },
+            onLeave: function(retval) {
+                console.log("    Original result: " + retval);
+            }
+        });
+    }
+    ```
+  </Tab>
+  
+  <Tab title="C Functions">
+    ```javascript
+    // Hook native C functions
+    var ptrace = Module.findExportByName(null, "ptrace");
+    
+    if (ptrace) {
+        Interceptor.attach(ptrace, {
+            onEnter: function(args) {
+                console.log("[+] ptrace called");
+                console.log("    Request: " + args[0]);
+                
+                // PT_DENY_ATTACH = 31
+                if (args[0].toInt32() === 31) {
+                    console.log("    [!] Anti-debugging detected - bypassing");
+                    // Modify to invalid request
+                    args[0] = ptr(0);
+                }
+            },
+            onLeave: function(retval) {
+                console.log("    Return: " + retval);
+            }
+        });
+        
+        console.log("[*] Hooked ptrace for anti-debugging bypass");
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Advanced Hooking Patterns
+
+<CodeGroup>
+```javascript Hook All Methods of a Class
+// Enumerate and hook all methods in a class
+var LoginViewController = ObjC.classes.LoginViewController;
+
+var methods = LoginViewController.$ownMethods;
+console.log("[*] Methods in LoginViewController:");
+
+methods.forEach(function(method) {
+    console.log("  " + method);
+    
+    try {
+        var impl = LoginViewController[method].implementation;
+        Interceptor.attach(impl, {
+            onEnter: function(args) {
+                console.log("[+] Called: " + method);
+            }
+        });
+    } catch(err) {
+        console.log("  [!] Failed to hook: " + err);
+    }
+});
+```
+
+```javascript Method Swizzling Detection
+// Detect if a method has been swizzled
+function checkForSwizzling(className, methodName) {
+    var cls = ObjC.classes[className];
+    var method = class_getInstanceMethod(cls, methodName);
+    
+    var imp = method_getImplementation(method);
+    var addr = imp.toString();
+    
+    console.log("[*] " + className + " " + methodName);
+    console.log("    Implementation at: " + addr);
+    
+    // Check if implementation is in expected module
+    var module = Process.findModuleByAddress(imp);
+    if (module) {
+        console.log("    Module: " + module.name);
+        if (module.name !== "YourApp") {
+            console.log("    [!] Possible swizzling detected!");
+        }
+    }
+}
+
+checkForSwizzling("NSURLSession", "- dataTaskWithRequest:completionHandler:");
+```
+
+```javascript Trace All Network Requests
+// Intercept NSURLSession requests
+var NSURLSession = ObjC.classes.NSURLSession;
+var dataTaskMethod = NSURLSession['- dataTaskWithRequest:completionHandler:'];
+
+Interceptor.attach(dataTaskMethod.implementation, {
+    onEnter: function(args) {
+        var request = ObjC.Object(args[2]);
+        var url = request.URL().absoluteString().toString();
+        var method = request.HTTPMethod().toString();
+        
+        console.log("[+] Network Request");
+        console.log("    Method: " + method);
+        console.log("    URL: " + url);
+        
+        var headers = request.allHTTPHeaderFields();
+        if (headers) {
+            console.log("    Headers: " + headers.toString());
+        }
+        
+        var body = request.HTTPBody();
+        if (body) {
+            console.log("    Body: " + ObjC.Object(body).toString());
+        }
+    }
+});
+```
+</CodeGroup>
+
+## Common Use Cases
+
+### Bypassing Jailbreak Detection
+
+<Steps>
+  <Step title="Identify Detection Methods">
+    Common jailbreak checks:
+    - File existence checks (`/Applications/Cydia.app`)
+    - Fork detection
+    - Suspicious libraries loaded
+    - URL scheme detection (`cydia://`)
+  </Step>
+  
+  <Step title="Create Bypass Script">
+    ```javascript
+    // bypass-jailbreak.js
+    
+    // Hook file access functions
+    var fopen = new NativeFunction(
+        Module.findExportByName(null, "fopen"),
+        'pointer', ['pointer', 'pointer']
+    );
+    
+    Interceptor.replace(fopen, new NativeCallback(function(path, mode) {
+        var pathStr = Memory.readUtf8String(path);
+        
+        // List of jailbreak-related paths
+        var jbPaths = [
+            "/Applications/Cydia.app",
+            "/bin/bash",
+            "/usr/sbin/sshd",
+            "/etc/apt",
+            "/Library/MobileSubstrate"
+        ];
+        
+        for (var i = 0; i < jbPaths.length; i++) {
+            if (pathStr.indexOf(jbPaths[i]) !== -1) {
+                console.log("[+] Blocked jailbreak check: " + pathStr);
+                return NULL;
+            }
+        }
+        
+        return fopen(path, mode);
+    }, 'pointer', ['pointer', 'pointer']));
+    
+    // Hook fork() to prevent detection
+    var fork = new NativeFunction(
+        Module.findExportByName(null, "fork"),
+        'int', []
+    );
+    
+    Interceptor.replace(fork, new NativeCallback(function() {
+        console.log("[+] Blocked fork() jailbreak check");
+        return -1; // Simulate failure
+    }, 'int', []));
+    
+    console.log("[*] Jailbreak detection bypass active");
+    ```
+  </Step>
+  
+  <Step title="Run the Script">
+    ```bash
+    frida -U -l bypass-jailbreak.js -f com.example.app
+    ```
+  </Step>
+</Steps>
+
+### SSL Pinning Bypass
+
+<CodeGroup>
+```javascript Universal SSL Kill Switch
+// ssl-bypass.js - Bypass most SSL pinning implementations
+
+if (ObjC.available) {
+    // Bypass NSURLSession SSL pinning
+    var NSURLSession = ObjC.classes.NSURLSession;
+    var delegate = NSURLSession['- URLSession:didReceiveChallenge:completionHandler:'];
+    
+    Interceptor.attach(delegate.implementation, {
+        onEnter: function(args) {
+            console.log("[+] Bypassing SSL pinning");
+            
+            // args[4] is the completion handler
+            var completionHandler = new ObjC.Block(args[4]);
+            
+            // Create disposition (NSURLSessionAuthChallengeUseCredential = 0)
+            var disposition = 0;
+            
+            // Create credential
+            var NSURLCredential = ObjC.classes.NSURLCredential;
+            var credential = NSURLCredential.credentialForTrust_(args[3]);
+            
+            // Call completion handler with "trust this certificate"
+            completionHandler(disposition, credential);
+        }
+    });
+    
+    console.log("[*] SSL pinning bypass active");
+}
+```
+
+```javascript TrustKit Framework Bypass
+// Bypass TrustKit SSL pinning library
+if (ObjC.available) {
+    var TrustKit = ObjC.classes.TrustKit;
+    
+    if (TrustKit) {
+        var pinningValidator = TrustKit['+ sharedInstance'];
+        var validateMethod = TrustKit['- pinningValidator:handleChallenge:completionHandler:'];
+        
+        Interceptor.attach(validateMethod.implementation, {
+            onEnter: function(args) {
+                console.log("[+] TrustKit validation intercepted");
+                
+                // Get completion handler
+                var completionHandler = new ObjC.Block(args[4]);
+                
+                // Call with "allow"
+                var disposition = 0; // Use credential
+                var credential = ObjC.classes.NSURLCredential.credentialForTrust_(args[3]);
+                
+                completionHandler(disposition, credential);
+            }
+        });
+        
+        console.log("[*] TrustKit bypass active");
+    }
+}
+```
+</CodeGroup>
+
+### Dumping Decrypted App Binary
+
+```javascript
+// Use frida-ios-dump tool
+// Install: pip install frida-ios-dump
+
+// On your computer:
+frida-ios-dump -H <device-ip> -u com.example.app
+
+// Or with USB:
+frida-ios-dump -U com.example.app
+
+// This will:
+// 1. Attach to the running app
+// 2. Dump decrypted binary from memory
+// 3. Package it as an IPA
+// 4. Save to current directory
+```
+
+### Runtime Manipulation
+
+<CodeGroup>
+```javascript Modify Method Behavior
+// Change authentication to always succeed
+if (ObjC.available) {
+    var AuthManager = ObjC.classes.AuthManager;
+    var authMethod = AuthManager['- authenticateUser:password:'];
+    
+    Interceptor.attach(authMethod.implementation, {
+        onLeave: function(retval) {
+            console.log("[+] Original auth result: " + retval);
+            
+            // Force success (BOOL YES = 1)
+            retval.replace(ptr(1));
+            
+            console.log("[+] Forced authentication success");
+        }
+    });
+}
+```
+
+```javascript Call Methods Programmatically
+// Invoke methods from Frida console
+if (ObjC.available) {
+    // Get app delegate
+    var appDelegate = ObjC.classes.UIApplication.sharedApplication().delegate();
+    
+    // Get user manager
+    var userManager = appDelegate.userManager();
+    
+    // Call method
+    var username = ObjC.classes.NSString.stringWithString_("admin");
+    var user = userManager.getUserByUsername_(username);
+    
+    console.log("[+] Retrieved user: " + user.toString());
+    
+    // Modify user properties
+    user.setIsAdmin_(1);
+    console.log("[+] Set user as admin");
+}
+```
+
+```javascript Memory Scanning
+// Find and modify values in memory
+function scanMemory(pattern) {
+    var ranges = Process.enumerateRanges('r--');
+    
+    ranges.forEach(function(range) {
+        try {
+            Memory.scan(range.base, range.size, pattern, {
+                onMatch: function(address, size) {
+                    console.log('[+] Found at: ' + address.toString());
+                    console.log('    Data: ' + hexdump(address, {length: 64}));
+                },
+                onError: function(reason) {
+                    console.log('[!] Error: ' + reason);
+                },
+                onComplete: function() {
+                    console.log('[*] Scan complete');
+                }
+            });
+        } catch(e) {}
+    });
+}
+
+// Example: Find "premium" string in memory
+scanMemory("70 72 65 6d 69 75 6d"); // "premium" in hex
+```
+</CodeGroup>
+
+## Frida Tools and Utilities
+
+<Tabs>
+  <Tab title="frida-trace">
+    **Automatically trace function calls**
+    
+    ```bash
+    # Trace all methods in a class
+    frida-trace -U -m "*[LoginViewController *]" YourApp
+    
+    # Trace specific Objective-C method
+    frida-trace -U -m "-[NSURLSession dataTaskWithRequest:*]" YourApp
+    
+    # Trace C function
+    frida-trace -U -i "ptrace" YourApp
+    
+    # Trace multiple patterns
+    frida-trace -U -m "*[*Auth* *]" -m "*[*Login* *]" YourApp
+    ```
+    
+    This generates handler files in `__handlers__/` that you can customize.
+  </Tab>
+  
+  <Tab title="frida-ps">
+    **List processes**
+    
+    ```bash
+    # List running apps
+    frida-ps -U
+    
+    # List installed apps
+    frida-ps -Uai
+    
+    # Filter by name
+    frida-ps -U | grep -i app
+    ```
+  </Tab>
+  
+  <Tab title="frida-ls-devices">
+    **List connected devices**
+    
+    ```bash
+    frida-ls-devices
+    
+    # Output:
+    # Id              Type    Name
+    # --------------  ------  ------------------
+    # local           local   Local System
+    # usb             usb     iPhone (12.4.1)
+    ```
+  </Tab>
+  
+  <Tab title="frida REPL">
+    **Interactive console**
+    
+    ```bash
+    # Attach to running app
+    frida -U YourApp
+    
+    # In Frida console:
+    [iPhone::YourApp]-> ObjC.classes.LoginViewController
+    [iPhone::YourApp]-> ObjC.choose(ObjC.classes.LoginViewController, {
+        onMatch: function(instance) {
+            console.log("Found instance: " + instance);
+        },
+        onComplete: function() {}
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Error Handling">
+    Always wrap hooks in try-catch:
+    
+    ```javascript
+    try {
+        var LoginVC = ObjC.classes.LoginViewController;
+        // ... hook code ...
+        console.log("[*] Hook successful");
+    } catch(err) {
+        console.log("[!] Hook failed: " + err.message);
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Performance">
+    - Avoid hooking high-frequency functions (like drawing/rendering)
+    - Use `Interceptor.attach` sparingly
+    - Consider using `Interceptor.replace` for simple modifications
+    - Detach hooks when no longer needed
+  </Accordion>
+  
+  <Accordion title="Debugging Scripts">
+    ```javascript
+    // Enable verbose logging
+    console.log("[*] Script loaded");
+    
+    // Check if ObjC is available
+    if (!ObjC.available) {
+        console.log("[!] Objective-C runtime not available");
+    }
+    
+    // Verify class exists
+    if (!ObjC.classes.LoginViewController) {
+        console.log("[!] LoginViewController not found");
+        console.log("[*] Available classes:");
+        for (var className in ObjC.classes) {
+            if (className.indexOf("Login") !== -1) {
+                console.log("  " + className);
+            }
+        }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Script Organization">
+    Organize complex scripts:
+    
+    ```javascript
+    // main.js
+    var JailbreakBypass = require('./modules/jailbreak-bypass');
+    var SSLBypass = require('./modules/ssl-bypass');
+    var Logging = require('./modules/logging');
+    
+    // Initialize modules
+    JailbreakBypass.init();
+    SSLBypass.init();
+    Logging.traceNetworkCalls();
+    
+    console.log("[*] All modules loaded");
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection Issues">
+    ```bash
+    # Can't connect to device
+    # 1. Check frida-server is running on device
+    ssh root@<device-ip> "ps aux | grep frida"
+    
+    # 2. Restart frida-server
+    ssh root@<device-ip> "killall frida-server; frida-server &"
+    
+    # 3. Check USB connection
+    idevice_id -l
+    
+    # 4. Verify port forwarding (if using USB)
+    iproxy 27042 27042
+    ```
+  </Accordion>
+  
+  <Accordion title="Script Not Working">
+    - Verify class names with `ObjC.classes`
+    - Check method signatures carefully
+    - Swift names are mangled - use frida-trace to find correct names
+    - Some apps detect Frida - use anti-detection techniques
+  </Accordion>
+  
+  <Accordion title="App Crashes">
+    - Remove hooks one by one to isolate the problematic hook
+    - Check thread safety - use `ObjC.schedule` for main thread
+    - Verify argument types and counts
+    - Check for null pointers before dereferencing
+  </Accordion>
+</AccordionGroup>
+
+## Related Tools
+
+<CardGroup cols={2}>
+  <Card title="Ghidra" icon="unlock" href="/tools/ghidra">
+    Static analysis to identify hooking targets
+  </Card>
+  
+  <Card title="IDA Pro" icon="microchip" href="/tools/ida-pro">
+    Find addresses and understand code flow
+  </Card>
+  
+  <Card title="LLDB" icon="bug" href="/tools/lldb">
+    Traditional debugging companion
+  </Card>
+  
+  <Card title="Hopper" icon="terminal" href="/tools/hopper">
+    Identify methods and classes to hook
+  </Card>
+</CardGroup>
+
+## Resources
+
+- [Official Frida Documentation](https://frida.re/docs/home/)
+- [Frida CodeShare](https://codeshare.frida.re/) - Community scripts
+- [Frida iOS Examples](https://github.com/frida/frida-ios-examples)
+- [Objection](https://github.com/sensepost/objection) - Frida-powered mobile security toolkit
+- [r2frida](https://github.com/nowsecure/r2frida) - Radare2 + Frida integration

@@ -1,0 +1,441 @@
+---
+title: 'Method Swizzling Example'
+description: 'Detailed walkthrough of detecting and analyzing method swizzling in ObjectiveSwizzling.ipa'
+---
+
+## Overview
+
+This guide provides a comprehensive walkthrough of analyzing `ObjectiveSwizzling.ipa`, a sample application that demonstrates Objective-C method swizzling. You'll learn how to detect swizzling, understand its purpose, and use the SwizzlingDetector script to automate the analysis.
+
+## What is Method Swizzling?
+
+Method swizzling is a technique in Objective-C that allows you to swap the implementations of two methods at runtime. It leverages the dynamic nature of the Objective-C runtime to change method behavior without modifying the original source code.
+
+### Common Use Cases
+
+**Legitimate**:
+- Analytics and tracking (e.g., tracking view controller appearances)
+- Debugging and development tools
+- Aspect-oriented programming
+- Hot-patching bugs in production
+
+**Malicious**:
+- Bypassing security checks
+- Intercepting sensitive data
+- Anti-debugging and anti-tampering
+- Keylogging and credential theft
+
+### How Swizzling Works
+
+```objc
+// Get the methods to swizzle
+Method originalMethod = class_getInstanceMethod([MyClass class], 
+                                                @selector(originalMethod));
+Method swizzledMethod = class_getInstanceMethod([MyClass class], 
+                                                @selector(swizzled_originalMethod));
+
+// Exchange implementations
+method_exchangeImplementations(originalMethod, swizzledMethod);
+
+// Now calling originalMethod will execute swizzled_originalMethod's code
+```
+
+After swizzling, calls to `originalMethod` will execute the implementation of `swizzled_originalMethod`, and vice versa.
+
+## Getting Started
+
+<Steps>
+  <Step title="Extract the IPA">
+    ```bash
+    unzip ObjectiveSwizzling.ipa
+    cd Payload/*.app
+    ```
+  </Step>
+  
+  <Step title="Locate the Binary">
+    ```bash
+    # Find the main executable
+    ls -la
+    
+    # Check architecture
+    file <binary_name>
+    lipo -info <binary_name>
+    ```
+  </Step>
+  
+  <Step title="Extract ARM64 Slice">
+    ```bash
+    lipo <binary_name> -thin arm64 -output binary_arm64
+    ```
+  </Step>
+  
+  <Step title="Import to Ghidra">
+    - Create a new Ghidra project
+    - Import `binary_arm64`
+    - Select ARM 64-bit (AARCH64) processor
+    - Run auto-analysis
+  </Step>
+</Steps>
+
+## Detection Methods
+
+### Method 1: Using SwizzlingDetector Script
+
+The fastest way to detect swizzling is using the automated script:
+
+<Steps>
+  <Step title="Load the Script">
+    - Open Script Manager in Ghidra (Window → Script Manager)
+    - Search for "SwizzlingDetector"
+    - Ensure the script is in your `ghidra_scripts` directory
+  </Step>
+  
+  <Step title="Run the Script">
+    Double-click the script to execute it. The script will search for common swizzling functions.
+  </Step>
+  
+  <Step title="Review Output">
+    Check the console for results:
+    
+    ```
+    Swizzling method method_exchangeImplementations located at address 00100004a2c, with references:
+    Address: 001000045b8
+    Address: 0010000467c
+    
+    Swizzling method class_getInstanceMethod located at address 00100004a18, with references:
+    Address: 001000045a0
+    Address: 001000045c4
+    ```
+  </Step>
+</Steps>
+
+### Method 2: Manual Detection
+
+You can also manually search for swizzling indicators:
+
+<Steps>
+  <Step title="Check Imports">
+    Look at the Symbol Tree (Window → Symbol Tree):
+    - Expand "Imports"
+    - Search for:
+      - `method_exchangeImplementations`
+      - `class_getInstanceMethod`
+      - `class_getClassMethod`
+      - `method_setImplementation`
+  </Step>
+  
+  <Step title="Search Strings">
+    Use Ghidra's string search (Search → For Strings):
+    - Look for selector names that might indicate swizzling
+    - Search for common swizzled methods like `viewDidAppear:`, `viewWillAppear:`
+  </Step>
+  
+  <Step title="Analyze References">
+    For each swizzling function found:
+    - Right-click → References → Show References to
+    - Navigate to each reference
+    - Analyze the surrounding code
+  </Step>
+</Steps>
+
+## Analysis Workflow
+
+### Step 1: Locate Swizzling Code
+
+Once the SwizzlingDetector script identifies swizzling references, navigate to those addresses:
+
+<Steps>
+  <Step title="Go to Address">
+    - Press 'G' in Ghidra
+    - Enter the reference address from the script output
+    - Press Enter
+  </Step>
+  
+  <Step title="View in Context">
+    - Look at the decompiled code view
+    - Identify the function containing the swizzling code
+    - Note the function name and purpose
+  </Step>
+</Steps>
+
+### Step 2: Identify What's Being Swizzled
+
+Analyze the swizzling code to determine which methods are affected:
+
+```c
+// Example decompiled swizzling code
+void +[SomeClass load](void) {
+    Class myClass = objc_getClass("UIViewController");
+    
+    SEL originalSelector = sel_registerName("viewDidAppear:");
+    SEL swizzledSelector = sel_registerName("swizzled_viewDidAppear:");
+    
+    Method originalMethod = class_getInstanceMethod(myClass, originalSelector);
+    Method swizzledMethod = class_getInstanceMethod(myClass, swizzledSelector);
+    
+    method_exchangeImplementations(originalMethod, swizzledMethod);
+}
+```
+
+From this code, you can determine:
+- **Target Class**: `UIViewController`
+- **Original Method**: `viewDidAppear:`
+- **Replacement Method**: `swizzled_viewDidAppear:`
+- **When**: In the `+load` method (executed when the class loads)
+
+### Step 3: Analyze the Replacement Method
+
+<Steps>
+  <Step title="Find the Replacement">
+    Search for the swizzled method implementation:
+    - Look for the selector name (e.g., `swizzled_viewDidAppear:`)
+    - Navigate to its implementation
+  </Step>
+  
+  <Step title="Understand the Behavior">
+    Analyze what the replacement method does:
+    ```objc
+    - (void)swizzled_viewDidAppear:(BOOL)animated {
+        // Custom code BEFORE original
+        NSLog(@"Tracking: %@ appeared", NSStringFromClass([self class]));
+        
+        // Call original implementation (now in swizzled_viewDidAppear)
+        [self swizzled_viewDidAppear:animated];
+        
+        // Custom code AFTER original
+        [Analytics trackScreenView:NSStringFromClass([self class])];
+    }
+    ```
+  </Step>
+  
+  <Step title="Determine Intent">
+    Classify the swizzling:
+    - **Analytics**: Tracking user behavior
+    - **Debugging**: Logging method calls
+    - **Security**: Anti-tampering checks
+    - **Malicious**: Data interception
+  </Step>
+</Steps>
+
+### Step 4: Document Findings
+
+Add comprehensive comments in Ghidra:
+
+```c
+// SWIZZLING DETECTED
+// Target: UIViewController.viewDidAppear:
+// Purpose: Track screen views for analytics
+// Swizzled to: swizzled_viewDidAppear:
+// Behavior: Logs appearance + calls original + sends analytics
+```
+
+## Common Swizzling Patterns
+
+### Pattern 1: View Controller Tracking
+
+**Purpose**: Analytics and user behavior tracking
+
+```objc
+// Swizzle viewDidAppear to track screen views
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class class = [UIViewController class];
+        
+        SEL originalSelector = @selector(viewDidAppear:);
+        SEL swizzledSelector = @selector(analytics_viewDidAppear:);
+        
+        Method originalMethod = class_getInstanceMethod(class, originalSelector);
+        Method swizzledMethod = class_getInstanceMethod(class, swizzledSelector);
+        
+        method_exchangeImplementations(originalMethod, swizzledMethod);
+    });
+}
+```
+
+**Indicators**:
+- Swizzles view controller lifecycle methods
+- Calls analytics or tracking functions
+- Usually in `+load` method
+
+### Pattern 2: Anti-Debugging
+
+**Purpose**: Detect and prevent debugging
+
+```objc
+// Swizzle debugging detection methods
++ (void)load {
+    Class class = [DebuggerCheck class];
+    
+    SEL originalSelector = @selector(isBeingDebugged);
+    SEL swizzledSelector = @selector(custom_isBeingDebugged);
+    
+    Method originalMethod = class_getClassMethod(class, originalSelector);
+    Method swizzledMethod = class_getClassMethod(class, swizzledSelector);
+    
+    method_exchangeImplementations(originalMethod, swizzledMethod);
+}
+```
+
+**Indicators**:
+- Swizzles system security checks
+- Modifies debugger detection
+- May call `sysctl` or `ptrace`
+
+### Pattern 3: Data Interception
+
+**Purpose**: Intercept sensitive data (potentially malicious)
+
+```objc
+// Swizzle data handling methods
++ (void)load {
+    Class class = [NSData class];
+    
+    SEL originalSelector = @selector(writeToFile:atomically:);
+    SEL swizzledSelector = @selector(intercepted_writeToFile:atomically:);
+    
+    Method originalMethod = class_getInstanceMethod(class, originalSelector);
+    Method swizzledMethod = class_getInstanceMethod(class, swizzledSelector);
+    
+    method_exchangeImplementations(originalMethod, swizzledMethod);
+}
+```
+
+**Indicators**:
+- Swizzles data I/O methods
+- Intercepts network requests
+- Accesses sensitive APIs (keychain, clipboard)
+
+## Using the SwizzlingDetector Script
+
+### Script Workflow
+
+<Steps>
+  <Step title="Automatic Detection">
+    The script searches for these runtime functions:
+    - `method_exchangeImplementations`
+    - `class_getInstanceMethod`
+    - `class_getClassMethod`
+    - `method_setImplementation`
+  </Step>
+  
+  <Step title="Reference Enumeration">
+    For each function found, it lists all cross-references (where it's called).
+  </Step>
+  
+  <Step title="Report Generation">
+    Outputs all findings to the console with addresses for easy navigation.
+  </Step>
+</Steps>
+
+### Interpreting Results
+
+**No Swizzling Found**:
+```
+No swizzling found
+```
+The application doesn't use method swizzling (or uses alternative hooking techniques).
+
+**Swizzling Detected**:
+```
+Swizzling method method_exchangeImplementations located at address 00100004a2c, with references:
+Address: 001000045b8
+Address: 0010000467c
+```
+
+This means:
+- The runtime function is imported at `00100004a2c`
+- It's called from two locations: `001000045b8` and `0010000467c`
+- Navigate to these addresses to analyze the swizzling code
+
+## Practice Exercises
+
+<Steps>
+  <Step title="Run Detection">
+    Use the SwizzlingDetector script on ObjectiveSwizzling.ipa. How many swizzling references did you find?
+  </Step>
+  
+  <Step title="Identify Methods">
+    For each reference, determine:
+    - Which class is being swizzled?
+    - Which method is being swizzled?
+    - What is the replacement method?
+  </Step>
+  
+  <Step title="Analyze Intent">
+    Read the replacement method implementations and classify each as:
+    - Legitimate (analytics, debugging)
+    - Security (anti-tampering)
+    - Suspicious (data interception)
+  </Step>
+  
+  <Step title="Compare with NoTampering">
+    Load NoTampering.ipa and verify it has no swizzling. This confirms the detection is accurate.
+  </Step>
+</Steps>
+
+## Advanced Topics
+
+### Fishhook and Other Hooking Techniques
+
+Method swizzling only works for Objective-C methods. For C functions and system calls, attackers use other techniques:
+
+- **Fishhook**: Hooks C functions by modifying the Mach-O symbol table
+- **Frida**: Dynamic instrumentation framework
+- **Substrate**: iOS hooking framework (jailbreak)
+
+These won't be detected by the SwizzlingDetector script and require different analysis approaches.
+
+### Defensive Swizzling Detection
+
+Some applications detect if they've been swizzled:
+
+```objc
+// Check if a method has been swizzled
+BOOL isSwizzled(Class class, SEL selector) {
+    Method method = class_getInstanceMethod(class, selector);
+    IMP implementation = method_getImplementation(method);
+    
+    // Compare implementation address with expected range
+    // If outside the main binary, it's likely swizzled
+    return !isInMainExecutable(implementation);
+}
+```
+
+## Troubleshooting
+
+### Script Returns No Results
+
+- Verify the binary is properly loaded and analyzed
+- Check if it's a Swift-only app (no Objective-C runtime)
+- The app might use alternative hooking methods
+
+### Too Many False Positives
+
+- Common in apps using analytics SDKs (Crashlytics, Firebase)
+- Focus on swizzling of security-sensitive methods
+- Check if the swizzling is from a known framework
+
+### Can't Find Replacement Method
+
+- The replacement might be in a different module/framework
+- Search for the selector name in strings
+- Look in external libraries loaded by the app
+
+## Key Takeaways
+
+<Note>
+  Method swizzling is a powerful technique that can be used for both legitimate and malicious purposes. Always analyze the context and behavior of swizzled methods to determine intent.
+</Note>
+
+- Swizzling is detectable through runtime function imports
+- The SwizzlingDetector script automates initial detection
+- Manual analysis is required to understand the purpose
+- Compare behavior with unmodified applications
+- Document all findings with clear comments
+
+## See Also
+
+- [Swizzling Detector Script](/scripts/swizzling-detector) - Full script documentation
+- [Sample IPA Files](/examples/sample-ipa-files) - Overview of all examples
+- [Control Flow Flattening Example](/examples/control-flow-flattening-example) - Another obfuscation technique

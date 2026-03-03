@@ -1,0 +1,385 @@
+---
+title: 'Method Swizzling Detection'
+description: 'Detecting and analyzing Objective-C method swizzling in iOS applications'
+icon: 'arrow-right-arrow-left'
+---
+
+## What is Method Swizzling?
+
+**Method swizzling** is a powerful Objective-C runtime technique that allows you to change the implementation of existing methods at runtime. This is possible because Objective-C uses dynamic dispatch through message passing.
+
+### How It Works
+
+In Objective-C, method calls are actually messages sent to objects:
+
+```objectivec
+// This code
+[myObject doSomething];
+
+// Is actually this at runtime
+objc_msgSend(myObject, @selector(doSomething));
+```
+
+The runtime looks up which implementation to call using a method table. Swizzling **exchanges** the implementations of two methods by manipulating this table.
+
+<Info>
+Method swizzling is commonly used for debugging, analytics, aspect-oriented programming, and unfortunately, by malware to hook system methods.
+</Info>
+
+## Swizzling Example
+
+Here's how method swizzling is typically implemented:
+
+```objectivec Example.m
+#import <objc/runtime.h>
+
+@implementation UIViewController (Tracking)
+
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class class = [self class];
+        
+        // Get original and swizzled selectors
+        SEL originalSelector = @selector(viewDidAppear:);
+        SEL swizzledSelector = @selector(tracking_viewDidAppear:);
+        
+        // Get method implementations
+        Method originalMethod = class_getInstanceMethod(class, originalSelector);
+        Method swizzledMethod = class_getInstanceMethod(class, swizzledSelector);
+        
+        // Exchange implementations
+        method_exchangeImplementations(originalMethod, swizzledMethod);
+    });
+}
+
+- (void)tracking_viewDidAppear:(BOOL)animated {
+    // Call original implementation (which is now in tracking_viewDidAppear)
+    [self tracking_viewDidAppear:animated];
+    
+    // Add custom tracking logic
+    NSLog(@"View appeared: %@", NSStringFromClass([self class]));
+}
+
+@end
+```
+
+<Warning>
+While swizzling is legal, it's dangerous when done incorrectly. Swizzling system methods can cause crashes, unexpected behavior, or break functionality in iOS updates.
+</Warning>
+
+## Why Detect Swizzling?
+
+Detecting method swizzling is important for:
+
+<CardGroup cols={2}>
+  <Card title="Security Analysis" icon="shield">
+    Identify malicious hooks or tampering with security mechanisms
+  </Card>
+  <Card title="Jailbreak Detection" icon="mobile">
+    Many jailbreak detection bypasses use swizzling to hook security checks
+  </Card>
+  <Card title="Reverse Engineering" icon="magnifying-glass">
+    Understand how an app modifies its own or system behavior
+  </Card>
+  <Card title="Quality Assurance" icon="check">
+    Find unintended or undocumented method modifications
+  </Card>
+</CardGroup>
+
+## Detection Techniques
+
+### Runtime Method Signatures
+
+Swizzling detection typically looks for calls to these Objective-C runtime functions:
+
+<AccordionGroup>
+  <Accordion title="method_exchangeImplementations" icon="right-left">
+    The primary function for swizzling - exchanges the implementations of two methods directly.
+    ```objectivec
+    void method_exchangeImplementations(Method m1, Method m2);
+    ```
+  </Accordion>
+  
+  <Accordion title="class_getInstanceMethod" icon="function">
+    Retrieves an instance method from a class - often used to get methods before swizzling.
+    ```objectivec
+    Method class_getInstanceMethod(Class cls, SEL name);
+    ```
+  </Accordion>
+  
+  <Accordion title="class_getClassMethod" icon="function">
+    Retrieves a class method - used for swizzling class-level methods.
+    ```objectivec
+    Method class_getClassMethod(Class cls, SEL name);
+    ```
+  </Accordion>
+  
+  <Accordion title="method_setImplementation" icon="pen">
+    Directly sets a method's implementation - an alternative to exchanging.
+    ```objectivec
+    IMP method_setImplementation(Method m, IMP imp);
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Static Binary Analysis
+
+In Ghidra or other disassemblers, look for:
+
+- Imports of the runtime functions listed above
+- Cross-references to these functions
+- Code patterns in `+load` or `+initialize` methods (common swizzling locations)
+- Categories on system classes (like `UIViewController+Tracking`)
+
+## Using the SwizzlingDetector.py Ghidra Script
+
+The **SwizzlingDetector.py** script automates the detection of method swizzling in iOS binaries analyzed with Ghidra.
+
+### What It Does
+
+<Steps>
+  <Step title="Scan Symbol Table">
+    Searches for all swizzling-related runtime function symbols
+  </Step>
+  <Step title="Find References">
+    Locates all code locations that reference these functions
+  </Step>
+  <Step title="Report Results">
+    Prints a comprehensive report of swizzling activity
+  </Step>
+</Steps>
+
+### Script Implementation
+
+Here's the complete **SwizzlingDetector.py** script:
+
+```python SwizzlingDetector.py
+#Detects whether an app is using swizzling and prints all references
+#@author LaurieWired
+#@category iOS
+
+from ghidra.program.model.symbol import SymbolType
+
+def find_swizzling():
+    # List of potential swizzling related methods
+    swizzling_methods = [
+        "method_exchangeImplementations",
+        "class_getInstanceMethod",
+        "class_getClassMethod",
+        "method_setImplementation"
+    ]
+    
+    # Find the addresses of all functions containing the substrings from swizzling_methods
+    swizzling_symbols = []
+    for symbol in currentProgram.getSymbolTable().getAllSymbols(True):
+        if symbol.getSymbolType() == SymbolType.FUNCTION and any(method in symbol.getName() for method in swizzling_methods):
+            swizzling_symbols.append(symbol)
+
+    if not swizzling_symbols:
+        print("No swizzling found")
+        return
+
+    for swizzling_symbol in swizzling_symbols:
+        # Enumerate all references to this function
+        references = list(currentProgram.getReferenceManager().getReferencesTo(swizzling_symbol.getAddress()))
+
+        if not references:
+            print("Swizzling method {} located at address {}, but had no references".format(swizzling_symbol.getName(), swizzling_symbol.getAddress()))
+            continue
+
+        print("Swizzling method {} located at address {}, with references:".format(swizzling_symbol.getName(), swizzling_symbol.getAddress()))
+        for ref in references:
+            print("Address: {}".format(ref.getFromAddress()))
+
+find_swizzling()
+```
+
+### How to Use
+
+<Steps>
+  <Step title="Load Binary in Ghidra">
+    Open your iOS application binary in Ghidra and complete the initial auto-analysis
+  </Step>
+  <Step title="Open Script Manager">
+    Navigate to **Window → Script Manager**
+  </Step>
+  <Step title="Run SwizzlingDetector.py">
+    Locate and execute the SwizzlingDetector.py script
+  </Step>
+  <Step title="Review Console Output">
+    Check the Ghidra console for detected swizzling locations
+  </Step>
+</Steps>
+
+### Sample Output
+
+<CodeGroup>
+```text No Swizzling Found
+No swizzling found
+```
+
+```text Swizzling Detected
+Swizzling method method_exchangeImplementations located at address 0x100004a20, with references:
+Address: 0x100002f14
+Address: 0x100003a88
+
+Swizzling method class_getInstanceMethod located at address 0x100004a40, with references:
+Address: 0x100002ef8
+Address: 0x100002f04
+Address: 0x100003a74
+Address: 0x100003a84
+```
+</CodeGroup>
+
+<Tip>
+Once you identify swizzling locations, navigate to those addresses in Ghidra to analyze what methods are being swizzled and why.
+</Tip>
+
+## ObjectiveSwizzling.ipa Example
+
+The **ObjectiveSwizzling.ipa** example demonstrates practical method swizzling implementation. This sample app is designed for reverse engineering practice.
+
+### What It Demonstrates
+
+<CardGroup cols={2}>
+  <Card title="Basic Swizzling" icon="1">
+    Simple method exchange using method_exchangeImplementations
+  </Card>
+  <Card title="Security Bypass" icon="2">
+    Swizzling authentication or security check methods
+  </Card>
+  <Card title="Analytics Hooks" icon="3">
+    Intercepting view controller lifecycle methods
+  </Card>
+  <Card title="Runtime Inspection" icon="4">
+    Techniques for inspecting swizzled implementations
+  </Card>
+</CardGroup>
+
+### Analyzing ObjectiveSwizzling.ipa
+
+<Steps>
+  <Step title="Extract the IPA">
+    Unzip the .ipa file and locate the app binary inside the Payload directory
+    ```bash
+    unzip ObjectiveSwizzling.ipa
+    cd Payload/ObjectiveSwizzling.app/
+    ```
+  </Step>
+  
+  <Step title="Load in Ghidra">
+    Import the binary into Ghidra and perform auto-analysis
+  </Step>
+  
+  <Step title="Run SwizzlingDetector">
+    Execute the SwizzlingDetector.py script to find all swizzling locations
+  </Step>
+  
+  <Step title="Analyze Swizzled Methods">
+    Navigate to each reference and examine the surrounding code to understand what's being swizzled
+  </Step>
+  
+  <Step title="Dynamic Analysis">
+    Use tools like Frida to hook the swizzled methods at runtime and observe behavior
+  </Step>
+</Steps>
+
+### Expected Findings
+
+When analyzing ObjectiveSwizzling.ipa, you should find:
+
+- Swizzling in `+load` methods of categories
+- Hooks on `UIViewController` lifecycle methods
+- Possible authentication bypass through swizzled security checks
+- Analytics tracking via swizzled UI methods
+
+<Warning>
+This IPA is for educational purposes only. Do not use these techniques on applications you don't own without permission.
+</Warning>
+
+## Advanced Detection
+
+Beyond the basic script, consider these advanced detection methods:
+
+### Runtime Inspection with Frida
+
+```javascript Frida script
+// Hook method_exchangeImplementations
+Interceptor.attach(Module.findExportByName(null, "method_exchangeImplementations"), {
+    onEnter: function(args) {
+        var method1 = new ObjC.Object(args[0]);
+        var method2 = new ObjC.Object(args[1]);
+        
+        console.log("[*] Swizzling detected!");
+        console.log("    Method 1: " + method1.toString());
+        console.log("    Method 2: " + method2.toString());
+        console.log("    Backtrace:\n" + Thread.backtrace(this.context).map(DebugSymbol.fromAddress).join("\n"));
+    }
+});
+```
+
+### IMP Comparison
+
+Compare method implementations to their expected values:
+
+```objectivec Runtime check
+// Get current implementation
+Method method = class_getInstanceMethod([UIViewController class], @selector(viewDidAppear:));
+IMP currentIMP = method_getImplementation(method);
+
+// Compare against original (if you have it)
+if (currentIMP != originalIMP) {
+    NSLog(@"Method has been swizzled!");
+}
+```
+
+## Best Practices for Analysis
+
+<CardGroup cols={2}>
+  <Card title="Document Findings" icon="book">
+    Keep notes on which methods are swizzled and their purpose
+  </Card>
+  <Card title="Cross-Reference" icon="link">
+    Check where swizzled methods are called in the app
+  </Card>
+  <Card title="Dynamic Testing" icon="play">
+    Combine static analysis with runtime instrumentation
+  </Card>
+  <Card title="Version Comparison" icon="code-compare">
+    Compare swizzling across app versions to track changes
+  </Card>
+</CardGroup>
+
+## Mitigation and Protection
+
+If you're protecting your own app from swizzling attacks:
+
+<AccordionGroup>
+  <Accordion title="Integrity Checks">
+    Verify that critical methods haven't been swizzled by checking their implementations at runtime.
+  </Accordion>
+  
+  <Accordion title="Anti-Debugging">
+    Detect debugging and instrumentation tools that might be used to swizzle methods.
+  </Accordion>
+  
+  <Accordion title="Code Obfuscation">
+    Make it harder to identify which methods to target for swizzling.
+  </Accordion>
+  
+  <Accordion title="Swift Instead of Objective-C">
+    Swift's static dispatch (for final classes/methods) is immune to swizzling.
+  </Accordion>
+</AccordionGroup>
+
+## Further Reading
+
+<CardGroup cols={2}>
+  <Card title="Runtime Inspection" icon="magnifying-glass" href="/swift-objc/runtime-inspection">
+    Deep dive into Objective-C runtime analysis
+  </Card>
+  <Card title="Swift Name Mangling" icon="shuffle" href="/swift-objc/swift-name-mangling">
+    Understanding Swift symbol mangling
+  </Card>
+</CardGroup>

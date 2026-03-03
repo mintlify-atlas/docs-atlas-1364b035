@@ -1,0 +1,579 @@
+---
+title: "iOS Code Signing"
+description: "Understanding iOS code signing, verification, and security implications"
+---
+
+## Overview
+
+Code signing is a critical security mechanism in iOS that ensures:
+- **Authenticity**: The app comes from a known, trusted source
+- **Integrity**: The app hasn't been modified since it was signed
+- **Authorization**: The app has permission to run on the device
+
+Every iOS app must be code-signed to execute on a device, whether it's for development, ad-hoc distribution, or App Store release.
+
+<Warning>
+Modifying any part of a signed app bundle invalidates the signature, preventing the app from launching.
+</Warning>
+
+## Code Signature Components
+
+iOS code signatures consist of several interconnected components:
+
+<Steps>
+  <Step title="Digital Certificate">
+    An Apple-issued certificate that identifies the developer or organization.
+  </Step>
+  
+  <Step title="Provisioning Profile">
+    A file containing entitlements, certificates, and device IDs (for non-App Store builds).
+  </Step>
+  
+  <Step title="Entitlements">
+    Permissions and capabilities the app is allowed to use.
+  </Step>
+  
+  <Step title="Code Signature Blob">
+    Cryptographic hashes of all executable code and resources.
+  </Step>
+</Steps>
+
+```
+┌─────────────────────────────────────────┐
+│          iOS App Bundle                 │
+├─────────────────────────────────────────┤
+│  MyApp (Mach-O)                         │
+│  ├─ LC_CODE_SIGNATURE → CodeDirectory   │ ← Hashes of code
+│  └─ Signature                           │ ← Cryptographic signature
+├─────────────────────────────────────────┤
+│  _CodeSignature/CodeResources           │ ← Hashes of all resources
+├─────────────────────────────────────────┤
+│  embedded.mobileprovision               │ ← Entitlements & certificates
+├─────────────────────────────────────────┤
+│  Info.plist, Assets, Frameworks, etc.   │
+└─────────────────────────────────────────┘
+```
+
+## Certificate Types
+
+Apple issues different types of certificates for different purposes:
+
+<Tabs>
+  <Tab title="Development">
+    **iOS App Development**
+    
+    - Used for debugging and testing on registered devices
+    - Limited to 100 devices per account per year
+    - Requires device UDIDs in provisioning profile
+    - Cannot be distributed outside registered devices
+    
+    ```bash
+    # Verify development certificate
+    security find-identity -v -p codesigning
+    ```
+  </Tab>
+  
+  <Tab title="Distribution">
+    **iOS Distribution**
+    
+    Two types:
+    
+    **Ad Hoc**: For internal testing and distribution
+    - Limited to 100 devices
+    - Requires device UDIDs
+    - No App Store submission
+    
+    **App Store**: For App Store submission
+    - No device restrictions
+    - Must go through App Review
+    - Encrypted by Apple
+  </Tab>
+  
+  <Tab title="Enterprise">
+    **Apple Developer Enterprise Program**
+    
+    - For internal distribution within an organization
+    - No device limit
+    - Requires D-U-N-S number and legal entity verification
+    - Not for public distribution
+    - Subject to revocation if misused
+    
+    <Warning>
+    Enterprise certificates are often abused for unauthorized distribution and are monitored closely by Apple.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Code Signature Structure
+
+The code signature is embedded in the Mach-O binary's `__LINKEDIT` segment and referenced by the `LC_CODE_SIGNATURE` load command.
+
+### CodeDirectory
+
+The CodeDirectory contains:
+
+<AccordionGroup>
+  <Accordion icon="fingerprint" title="Code Hashes">
+    SHA-1 or SHA-256 hashes of every page (4KB) of executable code.
+    
+    ```bash
+    # View code hashes
+    codesign -d -vvvv MyApp 2>&1 | grep "CandidateCDHash"
+    ```
+    
+    These hashes ensure the executable code hasn't been modified.
+  </Accordion>
+
+  <Accordion icon="list" title="Special Slots">
+    Hashes of special data like:
+    - Info.plist (slot -1)
+    - Requirements (slot -2)
+    - Resource directory (slot -3)
+    - Entitlements (slot -5)
+    - DER entitlements (slot -7)
+    
+    ```bash
+    # Extract and view special slots
+    codesign -d --entitlements :- MyApp
+    ```
+  </Accordion>
+
+  <Accordion icon="key" title="Identifier">
+    The unique bundle identifier for the application.
+    
+    ```bash
+    codesign -d -r- MyApp
+    # Output: identifier "com.company.appname"
+    ```
+  </Accordion>
+
+  <Accordion icon="flag" title="Flags">
+    Code signature flags indicating properties like:
+    - `adhoc`: Signed locally without certificate
+    - `hard`: Kill process if signature is invalid
+    - `runtime`: Hardened runtime enabled
+    - `library-validation`: Only load Apple or same-team-signed libraries
+    
+    ```bash
+    codesign -d -vvvv MyApp 2>&1 | grep "CodeDirectory"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### CodeResources
+
+The `_CodeSignature/CodeResources` file is an XML plist containing SHA hashes of all files in the app bundle:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
+<plist version="1.0">
+<dict>
+    <key>files</key>
+    <dict>
+        <key>Assets.car</key>
+        <data>5oqY8JG9h8...</data>  ← SHA-1 hash
+        <key>Info.plist</key>
+        <data>7kPl2QW3x9...</data>
+    </dict>
+    <key>files2</key>
+    <dict>
+        <key>Assets.car</key>
+        <dict>
+            <key>hash2</key>
+            <data>9mKp4RT7y2...</data>  ← SHA-256 hash
+        </dict>
+    </dict>
+</dict>
+</plist>
+```
+
+<Tip>
+The presence of both `files` (SHA-1) and `files2` (SHA-256) ensures compatibility with older iOS versions.
+</Tip>
+
+## Provisioning Profiles
+
+Provisioning profiles connect certificates, app IDs, entitlements, and devices.
+
+### Profile Structure
+
+A `.mobileprovision` file is a CMS (Cryptographic Message Syntax) signed plist:
+
+<CodeGroup>
+```bash Extract Profile
+# Extract plist from provisioning profile
+security cms -D -i embedded.mobileprovision > profile.plist
+```
+
+```bash View Profile Contents
+# Read extracted profile
+plutil -p profile.plist
+
+# Or use Apple's built-in tool
+security cms -D -i embedded.mobileprovision | plutil -p -
+```
+</CodeGroup>
+
+### Key Profile Properties
+
+<CardGroup cols={2}>
+  <Card title="AppIDName" icon="tag">
+    Human-readable app ID name
+  </Card>
+  
+  <Card title="ApplicationIdentifierPrefix" icon="id-badge">
+    Team ID prefix for the app identifier
+  </Card>
+  
+  <Card title="DeveloperCertificates" icon="certificate">
+    Array of DER-encoded certificates allowed to sign the app
+  </Card>
+  
+  <Card title="Entitlements" icon="key">
+    Dictionary of entitlements granted to the app
+  </Card>
+  
+  <Card title="ProvisionedDevices" icon="mobile">
+    Array of device UDIDs (development/ad-hoc only)
+  </Card>
+  
+  <Card title="ExpirationDate" icon="calendar">
+    When the provisioning profile expires
+  </Card>
+  
+  <Card title="TeamIdentifier" icon="users">
+    The developer team ID
+  </Card>
+  
+  <Card title="UUID" icon="fingerprint">
+    Unique identifier for this profile
+  </Card>
+</CardGroup>
+
+### Profile Example
+
+```xml
+<dict>
+    <key>AppIDName</key>
+    <string>My Application</string>
+    <key>ApplicationIdentifierPrefix</key>
+    <array>
+        <string>A1B2C3D4E5</string>
+    </array>
+    <key>DeveloperCertificates</key>
+    <array>
+        <data>MIIFmTCCBIG...</data>
+    </array>
+    <key>Entitlements</key>
+    <dict>
+        <key>application-identifier</key>
+        <string>A1B2C3D4E5.com.company.appname</string>
+        <key>get-task-allow</key>
+        <true/>
+    </dict>
+    <key>ExpirationDate</key>
+    <date>2026-12-31T23:59:59Z</date>
+    <key>ProvisionedDevices</key>
+    <array>
+        <string>00008030-001234567890001E</string>
+    </array>
+</dict>
+```
+
+## Verification Process
+
+When iOS launches an app, it verifies the code signature in multiple steps:
+
+<Steps>
+  <Step title="Certificate Chain Validation">
+    Verify the signing certificate chains to a trusted Apple root certificate.
+    
+    ```bash
+    # View certificate chain
+    codesign -dv --verbose=4 MyApp 2>&1 | grep "Authority"
+    ```
+  </Step>
+  
+  <Step title="Provisioning Profile Check">
+    For non-App Store apps:
+    - Check profile hasn't expired
+    - Verify device UDID is in profile (dev/ad-hoc)
+    - Ensure certificate in profile matches signing certificate
+  </Step>
+  
+  <Step title="Code Hash Verification">
+    Verify hashes of all code pages match those in CodeDirectory.
+    
+    ```bash
+    # Verify signature
+    codesign -v -vvvv MyApp
+    # Output: MyApp: valid on disk
+    # Output: MyApp: satisfies its Designated Requirement
+    ```
+  </Step>
+  
+  <Step title="Resource Verification">
+    Verify hashes of all resources match `CodeResources` file.
+  </Step>
+  
+  <Step title="Entitlements Validation">
+    Ensure requested entitlements are granted in provisioning profile and not security-critical without proper authorization.
+  </Step>
+</Steps>
+
+<Note>
+Verification happens both at launch time and continuously during execution. If a memory page is modified, the kernel will detect the hash mismatch.
+</Note>
+
+## Inspecting Code Signatures
+
+### Using codesign
+
+<CodeGroup>
+```bash Basic Information
+# Display basic signature info
+codesign -dv MyApp
+
+# Output:
+Executable=/path/to/MyApp
+Identifier=com.company.appname
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20500 size=12345 flags=0x0(none) hashes=123+5 location=embedded
+```
+
+```bash Detailed Information
+# Verbose signature details
+codesign -d -vvvv MyApp
+
+# Shows:
+# - Certificate chain
+# - Team identifier
+# - Signature flags
+# - Requirements
+# - All hash values
+```
+
+```bash Extract Entitlements
+# Export entitlements to stdout
+codesign -d --entitlements :- MyApp
+
+# Export to file
+codesign -d --entitlements entitlements.xml MyApp
+```
+
+```bash Verify Signature
+# Verify signature is valid
+codesign -v MyApp
+
+# Deep verification (check all nested code)
+codesign -v --deep MyApp
+
+# Strict verification
+codesign -v --strict MyApp
+```
+</CodeGroup>
+
+### Using jtool2
+
+```bash
+# Advanced code signature analysis
+jtool2 --sig MyApp
+
+# Display CodeDirectory
+jtool2 --sig --ent MyApp
+
+# Extract embedded provisioning profile
+jtool2 --prov MyApp
+```
+
+### Using security command
+
+```bash
+# Extract provisioning profile
+security cms -D -i embedded.mobileprovision
+
+# Verify certificate
+security verify-cert -c certificate.cer
+
+# List available signing identities
+security find-identity -v -p codesigning
+```
+
+## Re-signing Applications
+
+<Warning>
+Re-signing apps requires:
+- A valid certificate and provisioning profile
+- All embedded frameworks must also be re-signed
+- Original entitlements must be compatible with your profile
+</Warning>
+
+### Re-signing Steps
+
+<Steps>
+  <Step title="Extract entitlements">
+    ```bash
+    codesign -d --entitlements entitlements.xml OriginalApp
+    ```
+  </Step>
+  
+  <Step title="Sign embedded frameworks">
+    ```bash
+    codesign -f -s "iPhone Developer: Name (ID)" \
+      MyApp.app/Frameworks/Framework.framework
+    ```
+  </Step>
+  
+  <Step title="Replace provisioning profile">
+    ```bash
+    cp new.mobileprovision MyApp.app/embedded.mobileprovision
+    ```
+  </Step>
+  
+  <Step title="Sign the app bundle">
+    ```bash
+    codesign -f -s "iPhone Developer: Name (ID)" \
+      --entitlements entitlements.xml \
+      MyApp.app
+    ```
+  </Step>
+  
+  <Step title="Verify the signature">
+    ```bash
+    codesign -v -vvvv MyApp.app
+    ```
+  </Step>
+</Steps>
+
+### Automated Re-signing Tools
+
+<CardGroup cols={2}>
+  <Card title="ios-app-signer" icon="signature">
+    GUI tool for macOS to re-sign IPA files with drag-and-drop interface.
+  </Card>
+  
+  <Card title="zsign" icon="terminal">
+    Command-line tool for re-signing IPAs without Xcode or macOS.
+  </Card>
+  
+  <Card title="ldid" icon="code">
+    Lightweight tool for ad-hoc signing (jailbreak environments).
+  </Card>
+  
+  <Card title="Xcode (xcodebuild)" icon="apple">
+    Official Apple tool for signing during build process.
+  </Card>
+</CardGroup>
+
+## Security Implications
+
+### Bypassing Code Signing
+
+<Tabs>
+  <Tab title="Jailbreak">
+    On jailbroken devices:
+    - Code signature verification is disabled
+    - Apps can be modified and run without valid signatures
+    - Unsigned binaries can execute
+    - Common on older iOS versions and security research devices
+  </Tab>
+  
+  <Tab title="Developer Mode (iOS 16+)">
+    iOS 16+ introduced Developer Mode:
+    - Must be explicitly enabled in Settings
+    - Allows side-loading of development apps
+    - Still requires valid development certificate
+    - Provides security warnings to users
+  </Tab>
+  
+  <Tab title="Kernel Exploits">
+    Kernel-level exploits can:
+    - Disable AMFI (Apple Mobile File Integrity)
+    - Patch code signature checks
+    - Used in jailbreaking and security research
+    - Quickly patched by Apple
+  </Tab>
+</Tabs>
+
+### Detecting Tampering
+
+Apps can implement runtime integrity checks:
+
+```swift
+// Check if running with valid signature
+func isCodeSigningValid() -> Bool {
+    var status = SecStaticCodeCheckValidityWithErrors(
+        code, 
+        SecCSFlags(rawValue: kSecCSCheckAllArchitectures),
+        nil,
+        nil
+    )
+    return status == errSecSuccess
+}
+
+// Detect debugger attachment (get-task-allow)
+func isDebuggerAttached() -> Bool {
+    var info = kinfo_proc()
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+    var size = MemoryLayout<kinfo_proc>.stride
+    sysctl(&mib, 4, &info, &size, nil, 0)
+    return (info.kp_proc.p_flag & P_TRACED) != 0
+}
+```
+
+## Practical Examples
+
+### Example 1: Analyzing Example IPA Signatures
+
+```bash
+# Extract IPA
+unzip ~/workspace/source/ObfuscatedAppExamples/NoTampering.ipa -d /tmp/notamper/
+cd /tmp/notamper/Payload/*.app/
+
+# Check code signature
+codesign -dv NoTampering
+
+# Extract entitlements
+codesign -d --entitlements :- NoTampering
+
+# Verify signature validity
+codesign -v -vvvv NoTampering
+
+# Check provisioning profile
+security cms -D -i embedded.mobileprovision | plutil -p -
+```
+
+### Example 2: Comparing Debug vs Release Signatures
+
+```bash
+# Debug build typically has:
+# - get-task-allow entitlement (allows debugging)
+# - Development certificate
+# - Device UDIDs in profile
+
+# Release build has:
+# - No get-task-allow
+# - Distribution certificate  
+# - No device restrictions (App Store)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Entitlements" icon="key" href="/fundamentals/entitlements">
+    Learn about app permissions and capabilities.
+  </Card>
+  
+  <Card title="Mach-O Format" icon="file-binary" href="/fundamentals/mach-o-format">
+    Understand where signatures are stored in binaries.
+  </Card>
+  
+  <Card title="IPA Files" icon="file-zipper" href="/fundamentals/ipa-files">
+    Learn how to extract and inspect signed apps.
+  </Card>
+  
+  <Card title="Runtime Analysis" icon="play">
+    Analyze apps at runtime despite code signing.
+  </Card>
+</CardGroup>

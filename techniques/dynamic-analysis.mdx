@@ -1,0 +1,657 @@
+---
+title: 'Dynamic Analysis Techniques'
+description: 'Explore runtime analysis, memory inspection, API monitoring, and execution tracing for iOS applications'
+icon: 'gauge-high'
+---
+
+## Overview
+
+Dynamic analysis involves examining an iOS application while it's running. This technique reveals runtime behavior, exposes hidden functionality, and enables real-time manipulation.
+
+<Warning>
+Dynamic analysis requires a jailbroken device or simulator. All techniques assume you have root access.
+</Warning>
+
+## Runtime Analysis
+
+### Setting Up Your Environment
+
+<Steps>
+  <Step title="Jailbreak your device">
+    Use checkra1n, unc0ver, or another jailbreak tool appropriate for your iOS version.
+  </Step>
+  
+  <Step title="Install essential tools">
+    Via Cydia or Sileo:
+    - Frida (runtime instrumentation)
+    - Cycript (Objective-C/JavaScript runtime)
+    - OpenSSH (remote access)
+    - AppSync Unified (install unsigned apps)
+  </Step>
+  
+  <Step title="Setup SSH access">
+    ```bash
+    # From your computer
+    ssh root@<device-ip>
+    # Default password: alpine (change immediately!)
+    passwd
+    ```
+  </Step>
+</Steps>
+
+### Frida Fundamentals
+
+Frida is the most powerful tool for iOS dynamic analysis.
+
+<Tabs>
+  <Tab title="Installation">
+    ```bash
+    # On your computer
+    pip install frida-tools
+    
+    # On jailbroken device (via SSH)
+    wget https://build.frida.re/frida/ios/frida_16.1.4_iphoneos-arm.deb
+    dpkg -i frida_16.1.4_iphoneos-arm.deb
+    ```
+  </Tab>
+  
+  <Tab title="List Applications">
+    ```bash
+    # List all running apps
+    frida-ps -U
+    
+    # List all installed apps
+    frida-ps -Uai
+    ```
+  </Tab>
+  
+  <Tab title="Basic Hooking">
+    ```javascript
+    // hook.js - Hook a simple method
+    if (ObjC.available) {
+        var className = "LoginViewController";
+        var methodName = "- validatePassword:";
+        
+        var hook = ObjC.classes[className][methodName];
+        
+        Interceptor.attach(hook.implementation, {
+            onEnter: function(args) {
+                console.log("[+] Called " + methodName);
+                // args[0] = self
+                // args[1] = selector
+                // args[2] = first argument
+                var password = ObjC.Object(args[2]);
+                console.log("[+] Password: " + password.toString());
+            },
+            onLeave: function(retval) {
+                console.log("[+] Return value: " + retval);
+                // Modify return value
+                retval.replace(1); // Always return true
+            }
+        });
+    }
+    ```
+    
+    Run it:
+    ```bash
+    frida -U -l hook.js "Target App"
+    ```
+  </Tab>
+</Tabs>
+
+### Real-World Hooking Examples
+
+<AccordionGroup>
+  <Accordion title="Bypass Jailbreak Detection" icon="shield-xmark">
+    ```javascript
+    // Hook common jailbreak detection methods
+    var fileManager = ObjC.classes.NSFileManager;
+    
+    Interceptor.attach(
+        fileManager['- fileExistsAtPath:'].implementation,
+        {
+            onEnter: function(args) {
+                var path = ObjC.Object(args[2]).toString();
+                
+                // Jailbreak-related paths
+                var jbPaths = [
+                    '/Applications/Cydia.app',
+                    '/bin/bash',
+                    '/usr/sbin/sshd',
+                    '/etc/apt',
+                    '/private/var/lib/apt'
+                ];
+                
+                if (jbPaths.includes(path)) {
+                    console.log('[!] Blocking jailbreak check: ' + path);
+                    this.blocked = true;
+                }
+            },
+            onLeave: function(retval) {
+                if (this.blocked) {
+                    retval.replace(0); // Return NO
+                    this.blocked = false;
+                }
+            }
+        }
+    );
+    
+    // Hook fork() system call
+    Interceptor.attach(Module.findExportByName(null, 'fork'), {
+        onLeave: function(retval) {
+            console.log('[!] fork() called, returning 0');
+            retval.replace(0);
+        }
+    });
+    ```
+  </Accordion>
+  
+  <Accordion title="Log All Method Calls" icon="list">
+    ```javascript
+    // Trace all methods in a specific class
+    function traceClass(className) {
+        var targetClass = ObjC.classes[className];
+        var methods = targetClass.$ownMethods;
+        
+        methods.forEach(function(method) {
+            try {
+                Interceptor.attach(
+                    targetClass[method].implementation,
+                    {
+                        onEnter: function(args) {
+                            console.log('[+] ' + className + ' ' + method);
+                            
+                            // Log arguments (skip self and selector)
+                            for (var i = 2; i < args.length; i++) {
+                                try {
+                                    var arg = ObjC.Object(args[i]);
+                                    console.log('    arg[' + i + ']: ' + arg.toString());
+                                } catch(e) {
+                                    console.log('    arg[' + i + ']: ' + args[i]);
+                                }
+                            }
+                        }
+                    }
+                );
+            } catch(e) {
+                console.log('[-] Failed to hook ' + method);
+            }
+        });
+    }
+    
+    // Use it
+    traceClass('SubscriptionManager');
+    ```
+  </Accordion>
+  
+  <Accordion title="Intercept Crypto Operations" icon="lock">
+    ```javascript
+    // Hook CommonCrypto CCCrypt function
+    var CCCrypt = new NativeFunction(
+        Module.findExportByName('libcommonCrypto.dylib', 'CCCrypt'),
+        'int',
+        ['int', 'int', 'int', 'pointer', 'int', 'pointer', 'pointer', 'int', 'pointer', 'int', 'pointer']
+    );
+    
+    Interceptor.replace(CCCrypt, new NativeCallback(function(
+        op, alg, options, key, keyLength, iv, dataIn, dataInLength,
+        dataOut, dataOutAvailable, dataOutMoved
+    ) {
+        console.log('[+] CCCrypt called');
+        console.log('    Operation: ' + (op === 0 ? 'Encrypt' : 'Decrypt'));
+        console.log('    Algorithm: ' + alg);
+        
+        // Read key
+        if (key && keyLength > 0) {
+            var keyData = Memory.readByteArray(key, keyLength);
+            console.log('    Key: ' + hexdump(keyData));
+        }
+        
+        // Read IV
+        if (iv) {
+            var ivData = Memory.readByteArray(iv, 16);
+            console.log('    IV: ' + hexdump(ivData));
+        }
+        
+        // Call original
+        return CCCrypt(op, alg, options, key, keyLength, iv,
+                      dataIn, dataInLength, dataOut,
+                      dataOutAvailable, dataOutMoved);
+    }, 'int', ['int', 'int', 'int', 'pointer', 'int', 'pointer',
+               'pointer', 'int', 'pointer', 'int', 'pointer']));
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Memory Inspection
+
+### Cycript for Runtime Exploration
+
+Cycript combines Objective-C and JavaScript for interactive runtime manipulation.
+
+<CodeGroup>
+```bash Connect to App
+# Attach to running app
+cycript -p "Target App"
+
+# Or by PID
+cycript -p 1234
+```
+
+```javascript List Classes
+// List all loaded classes
+var classes = [];
+for (var name in ObjC.classes) {
+    classes.push(name);
+}
+classes.sort();
+
+// Filter classes
+classes.filter(function(c) {
+    return c.includes('Login');
+});
+```
+
+```javascript Explore Objects
+// Get the root view controller
+var app = [UIApplication sharedApplication];
+var keyWindow = app.keyWindow;
+var rootVC = keyWindow.rootViewController;
+
+// Navigate the view hierarchy
+var presentedVC = rootVC.presentedViewController;
+
+// Access properties
+presentedVC.title
+presentedVC.view.backgroundColor
+
+// Call methods
+[presentedVC.view setBackgroundColor:[UIColor redColor]];
+```
+</CodeGroup>
+
+### Memory Dumping with Frida
+
+<Tabs>
+  <Tab title="Dump Memory Range">
+    ```javascript
+    // Dump a memory region
+    function dumpMemory(address, size, filename) {
+        var addr = ptr(address);
+        var data = Memory.readByteArray(addr, size);
+        
+        var file = new File(filename, 'wb');
+        file.write(data);
+        file.close();
+        
+        console.log('[+] Dumped ' + size + ' bytes to ' + filename);
+    }
+    
+    // Usage
+    dumpMemory('0x1000a4000', 0x10000, '/tmp/dump.bin');
+    ```
+  </Tab>
+  
+  <Tab title="Search Memory">
+    ```javascript
+    // Search for a string in memory
+    function searchMemory(pattern) {
+        var results = [];
+        
+        Process.enumerateRanges('r--', {
+            onMatch: function(range) {
+                try {
+                    Memory.scan(range.base, range.size, pattern, {
+                        onMatch: function(address, size) {
+                            console.log('[+] Found at: ' + address);
+                            results.push(address);
+                        },
+                        onComplete: function() {}
+                    });
+                } catch(e) {}
+            },
+            onComplete: function() {
+                console.log('[+] Search complete: ' + results.length + ' matches');
+            }
+        });
+    }
+    
+    // Search for UTF-8 string
+    searchMemory('70 61 73 73 77 6f 72 64'); // "password"
+    ```
+  </Tab>
+  
+  <Tab title="Dump Decrypted Binary">
+    ```python
+    # dump_binary.py - Dump decrypted app binary
+    import frida
+    import sys
+    
+    def on_message(message, data):
+        if message['type'] == 'send':
+            print(message['payload'])
+        elif message['type'] == 'error':
+            print(message['stack'])
+    
+    device = frida.get_usb_device()
+    pid = device.spawn(['com.example.app'])
+    session = device.attach(pid)
+    
+    script = session.create_script("""
+    var binary = Process.enumerateModules()[0];
+    console.log('[+] Binary: ' + binary.name);
+    console.log('[+] Base: ' + binary.base);
+    console.log('[+] Size: ' + binary.size);
+    
+    // Dump to file
+    var data = Memory.readByteArray(binary.base, binary.size);
+    var file = new File('/tmp/decrypted.bin', 'wb');
+    file.write(data);
+    file.close();
+    
+    console.log('[+] Dumped to /tmp/decrypted.bin');
+    """)
+    
+    script.on('message', on_message)
+    script.load()
+    device.resume(pid)
+    sys.stdin.read()
+    ```
+  </Tab>
+</Tabs>
+
+## Monitoring API Calls
+
+### NSURLSession Interception
+
+<CodeGroup>
+```javascript Hook Requests
+// Intercept all network requests
+var NSURLSession = ObjC.classes.NSURLSession;
+var NSURLRequest = ObjC.classes.NSURLRequest;
+
+Interceptor.attach(
+    ObjC.classes.NSURLSessionTask['- resume'].implementation,
+    {
+        onEnter: function(args) {
+            var task = ObjC.Object(args[0]);
+            var request = task.currentRequest();
+            
+            console.log('\n[+] Network Request');
+            console.log('    URL: ' + request.URL().absoluteString());
+            console.log('    Method: ' + request.HTTPMethod());
+            
+            // Log headers
+            var headers = request.allHTTPHeaderFields();
+            if (headers) {
+                console.log('    Headers: ' + headers.toString());
+            }
+            
+            // Log body
+            var body = request.HTTPBody();
+            if (body) {
+                var data = ObjC.Object(body);
+                var str = ObjC.classes.NSString.alloc()
+                    .initWithData_encoding_(data, 4); // UTF-8
+                console.log('    Body: ' + str.toString());
+            }
+        }
+    }
+);
+```
+
+```javascript Hook Responses
+// Intercept all network responses
+var block = new ObjC.Block({
+    retType: 'void',
+    argTypes: ['object', 'object', 'object'],
+    implementation: function(data, response, error) {
+        console.log('\n[+] Network Response');
+        
+        if (response) {
+            var resp = ObjC.Object(response);
+            console.log('    URL: ' + resp.URL().absoluteString());
+            console.log('    Status: ' + resp.statusCode());
+        }
+        
+        if (data) {
+            var dataObj = ObjC.Object(data);
+            var str = ObjC.classes.NSString.alloc()
+                .initWithData_encoding_(dataObj, 4);
+            console.log('    Data: ' + str.toString());
+        }
+        
+        if (error) {
+            console.log('    Error: ' + ObjC.Object(error).localizedDescription());
+        }
+    }
+});
+```
+</CodeGroup>
+
+### AFNetworking Hooks
+
+<Accordion title="Intercepting AFNetworking">
+Many apps use AFNetworking for networking:
+
+```javascript
+// Hook AFHTTPSessionManager
+if (ObjC.classes.AFHTTPSessionManager) {
+    var methods = [
+        '- GET:parameters:success:failure:',
+        '- POST:parameters:success:failure:',
+        '- PUT:parameters:success:failure:',
+        '- DELETE:parameters:success:failure:'
+    ];
+    
+    methods.forEach(function(method) {
+        var parts = method.split(' ');
+        var httpMethod = parts[1].split(':')[0];
+        
+        Interceptor.attach(
+            ObjC.classes.AFHTTPSessionManager[method].implementation,
+            {
+                onEnter: function(args) {
+                    var url = ObjC.Object(args[2]).toString();
+                    var params = ObjC.Object(args[3]);
+                    
+                    console.log('[+] AFNetworking ' + httpMethod);
+                    console.log('    URL: ' + url);
+                    console.log('    Params: ' + params.toString());
+                }
+            }
+        );
+    });
+}
+```
+</Accordion>
+
+## Tracing Execution Flow
+
+### Method Tracing with Frida-Trace
+
+<Steps>
+  <Step title="Trace specific methods">
+    ```bash
+    # Trace all methods in a class
+    frida-trace -U "Target App" -m "-[LoginViewController *]"
+    
+    # Trace multiple classes
+    frida-trace -U "Target App" \
+      -m "-[Login* *]" \
+      -m "-[Auth* *]"
+    ```
+  </Step>
+  
+  <Step title="Trace Objective-C runtime">
+    ```bash
+    # Trace objc_msgSend
+    frida-trace -U "Target App" -i "objc_msgSend"
+    
+    # Trace specific modules
+    frida-trace -U "Target App" -I "libSystem*"
+    ```
+  </Step>
+  
+  <Step title="Custom trace handlers">
+    Frida-trace generates handlers in `__handlers__/` directory. Edit them:
+    
+    ```javascript
+    // __handlers__/LoginViewController/validatePassword_.js
+    {
+      onEnter(log, args, state) {
+        log('-[LoginViewController validatePassword:' + 
+            ObjC.Object(args[2]) + ']');
+        state.password = ObjC.Object(args[2]).toString();
+      },
+      
+      onLeave(log, retval, state) {
+        log('  => ' + retval + ' for password: ' + state.password);
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+### Call Stack Tracing
+
+<CodeGroup>
+```javascript Capture Stack Trace
+// Get call stack when method is called
+Interceptor.attach(
+    ObjC.classes.ViewController['- viewDidLoad'].implementation,
+    {
+        onEnter: function(args) {
+            console.log('[+] viewDidLoad called');
+            console.log(Thread.backtrace(this.context, Backtracer.ACCURATE)
+                .map(DebugSymbol.fromAddress)
+                .join('\n'));
+        }
+    }
+);
+```
+
+```javascript Trace Code Coverage
+// Track which methods are actually called
+var coverage = {};
+
+function instrumentClass(className) {
+    var cls = ObjC.classes[className];
+    cls.$ownMethods.forEach(function(method) {
+        try {
+            Interceptor.attach(cls[method].implementation, {
+                onEnter: function() {
+                    var key = className + ' ' + method;
+                    if (!coverage[key]) {
+                        coverage[key] = 0;
+                    }
+                    coverage[key]++;
+                }
+            });
+        } catch(e) {}
+    });
+}
+
+// Instrument target classes
+instrumentClass('PaymentViewController');
+instrumentClass('SubscriptionManager');
+
+// Later, dump coverage
+setTimeout(function() {
+    console.log('\n[+] Code Coverage:');
+    Object.keys(coverage).forEach(function(key) {
+        console.log('    ' + key + ': ' + coverage[key] + ' calls');
+    });
+}, 60000); // After 60 seconds
+```
+</CodeGroup>
+
+## Advanced Techniques
+
+<CardGroup cols={2}>
+  <Card title="Runtime Class Manipulation" icon="wand-magic-sparkles">
+    ```javascript
+    // Add a new method at runtime
+    var LoginVC = ObjC.classes.LoginViewController;
+    
+    LoginVC['- debugBypass'] = function() {
+        console.log('[+] Debug bypass called');
+        return true;
+    };
+    
+    // Method swizzling
+    var original = LoginVC['- validatePassword:'];
+    LoginVC['- validatePassword:'] = function(pwd) {
+        console.log('[+] Swizzled method');
+        return true; // Always succeed
+    };
+    ```
+  </Card>
+  
+  <Card title="Stalker for Instruction Tracing" icon="magnifying-glass">
+    ```javascript
+    // Trace every instruction in a function
+    var addr = Module.findExportByName(null, 'strcmp');
+    
+    Stalker.follow({
+        events: {
+            call: true,
+            ret: false,
+            exec: false
+        },
+        onReceive: function(events) {
+            console.log(Stalker.parse(events));
+        }
+    });
+    ```
+  </Card>
+</CardGroup>
+
+<Warning>
+Stalker tracing generates massive amounts of data. Use sparingly and with filters.
+</Warning>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Performance Considerations">
+    - Hook selectively - only target methods of interest
+    - Use early returns when conditions aren't met
+    - Disable verbose logging in production scripts
+    - Consider memory impact of large data captures
+  </Accordion>
+  
+  <Accordion title="Reliability">
+    - Always wrap hooks in try-catch blocks
+    - Check if classes/methods exist before hooking
+    - Handle both ARM64 and ARMv7 if needed
+    - Test on multiple iOS versions
+  </Accordion>
+  
+  <Accordion title="Security">
+    - Never leave Frida server running in production
+    - Change default SSH password immediately
+    - Use secure channels for data exfiltration
+    - Clear logs and temporary files
+  </Accordion>
+</AccordionGroup>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Frida Docs" icon="book" href="https://frida.re/docs">
+    Official Frida documentation
+  </Card>
+  
+  <Card title="Frida CodeShare" icon="share-nodes" href="https://codeshare.frida.re">
+    Community Frida scripts
+  </Card>
+  
+  <Card title="Cycript Manual" icon="terminal" href="http://www.cycript.org/manual">
+    Cycript syntax and usage
+  </Card>
+  
+  <Card title="iOS Runtime Headers" icon="code" href="https://github.com/nst/iOS-Runtime-Headers">
+    Private framework headers
+  </Card>
+</CardGroup>

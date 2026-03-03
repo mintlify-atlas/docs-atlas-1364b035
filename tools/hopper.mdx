@@ -1,0 +1,470 @@
+---
+title: 'Hopper Disassembler'
+description: 'Using Hopper for iOS reverse engineering'
+---
+
+Hopper Disassembler is a macOS and Linux reverse engineering tool that excels at analyzing iOS binaries. Its native macOS integration and intuitive interface make it a popular choice for iOS researchers.
+
+## Overview
+
+Hopper is a commercial disassembler that offers:
+- Native Mach-O binary support
+- Excellent Objective-C and Swift class extraction
+- Interactive control flow graphs
+- Built-in decompiler (pseudo-code generation)
+- Fast analysis and responsive UI
+
+<Info>
+  Hopper is particularly strong for Objective-C analysis and provides a more polished UI experience compared to open-source alternatives.
+</Info>
+
+## Features for iOS Analysis
+
+### Automatic Class Detection
+
+Hopper automatically detects and organizes Objective-C and Swift classes:
+
+<Steps>
+  <Step title="Class Browser">
+    The left sidebar displays all detected classes in a hierarchical tree:
+    - Objective-C classes with full method lists
+    - Swift classes (with mangled names that can be demangled)
+    - Protocols and categories
+  </Step>
+  
+  <Step title="Method Navigation">
+    Click any method to navigate directly to its implementation:
+    ```objectivec
+    @interface LoginViewController : UIViewController
+    - (void)loginButtonTapped:(id)sender;
+    - (void)validateCredentials:(NSString *)username password:(NSString *)password;
+    @end
+    ```
+  </Step>
+  
+  <Step title="Cross-References">
+    Right-click any method or symbol to see:
+    - All references to this method
+    - All calls from this method
+    - String references
+  </Step>
+</Steps>
+
+### Decompilation
+
+Hopper's pseudo-code decompiler generates C-like code from assembly:
+
+<Tabs>
+  <Tab title="Assembly View">
+    ```asm
+    _validateCredentials:password:
+    push    rbp
+    mov     rbp, rsp
+    sub     rsp, 0x30
+    mov     qword [rbp+var_8], rdi
+    mov     qword [rbp+var_10], rsi
+    mov     qword [rbp+var_18], rdx
+    mov     qword [rbp+var_20], rcx
+    ```
+  </Tab>
+  
+  <Tab title="Pseudo-Code View">
+    ```c
+    void -[LoginViewController validateCredentials:password:](void *self, void *_cmd, 
+                                                               void *username, void *password) {
+        if ([username length] == 0x0 || [password length] == 0x0) {
+            [self showErrorAlert:@"Please enter both username and password"];
+            return;
+        }
+        
+        void *apiClient = [APIClient sharedInstance];
+        [apiClient authenticateUser:username password:password completion:^(bool success, void *error) {
+            if (success) {
+                [self performSegueWithIdentifier:@"LoginSuccess" sender:self];
+            } else {
+                [self showErrorAlert:[error localizedDescription]];
+            }
+        }];
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Control Flow Graphs
+
+Visualize program flow with interactive CFGs:
+
+<Steps>
+  <Step title="Generate CFG">
+    - Select a function
+    - View → Show Control Flow Graph (or Alt+Shift+G)
+  </Step>
+  
+  <Step title="Navigate the Graph">
+    - Zoom with mouse wheel
+    - Click basic blocks to view disassembly
+    - Follow branches to understand logic flow
+  </Step>
+  
+  <Step title="Analyze Paths">
+    Identify:
+    - Conditional branches (if/else statements)
+    - Loops (for, while)
+    - Exception handling paths
+    - Return points
+  </Step>
+</Steps>
+
+### String Analysis
+
+<CardGroup cols={2}>
+  <Card title="String Search" icon="magnifying-glass">
+    View → Strings to see all strings in the binary:
+    - API endpoints
+    - Encryption keys
+    - Error messages
+    - Debug strings
+  </Card>
+  
+  <Card title="String References" icon="arrow-pointer">
+    Right-click any string to see:
+    - Which functions use it
+    - How it's used (passed to function, compared, etc.)
+  </Card>
+</CardGroup>
+
+## Workflow Tips
+
+### Initial Analysis Workflow
+
+<Steps>
+  <Step title="Import the Binary">
+    <CodeGroup>
+    ```bash Extract from IPA
+    unzip YourApp.ipa
+    cd Payload/YourApp.app/
+    open -a "Hopper Disassembler" YourApp
+    ```
+    
+    ```bash From Device
+    # SSH to jailbroken device
+    ssh root@192.168.1.100
+    
+    # Find and copy binary
+    cd /var/containers/Bundle/Application/*/YourApp.app/
+    # Copy to local machine
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Configure Analysis Options">
+    When loading the binary:
+    1. Select the correct architecture (arm64 for modern iOS)
+    2. Enable "Objective-C" analysis
+    3. Enable "Swift" if the app uses Swift
+    4. Click "OK" to start analysis
+  </Step>
+  
+  <Step title="Wait for Analysis">
+    Hopper will:
+    - Parse the Mach-O structure
+    - Identify functions and entry points
+    - Extract Objective-C classes and methods
+    - Generate cross-references
+    
+    <Note>
+      Initial analysis typically takes 1-5 minutes depending on binary size.
+    </Note>
+  </Step>
+  
+  <Step title="Begin Investigation">
+    Start with high-value targets:
+    - Interesting class names (Auth, Login, Crypto, etc.)
+    - String references to API endpoints
+    - Entrypoints and initialization methods
+  </Step>
+</Steps>
+
+### Keyboard Shortcuts
+
+<AccordionGroup>
+  <Accordion title="Navigation">
+    - `G` - Go to address
+    - `Cmd+F` - Find/search
+    - `X` - Cross-references
+    - `Esc` - Go back in navigation history
+    - `Shift+Esc` - Go forward in navigation history
+  </Accordion>
+  
+  <Accordion title="View Modes">
+    - `Alt+Shift+A` - Assembly view
+    - `Alt+Shift+P` - Pseudo-code view
+    - `Alt+Shift+G` - Control flow graph
+    - `Alt+Shift+H` - Hexadecimal view
+  </Accordion>
+  
+  <Accordion title="Analysis">
+    - `N` - Rename symbol
+    - `Shift+Cmd+X` - References to this address
+    - `;` - Add comment
+    - `P` - Create procedure (function)
+  </Accordion>
+</AccordionGroup>
+
+### Advanced Techniques
+
+<Tabs>
+  <Tab title="Python Scripting">
+    Automate analysis with Python scripts:
+    
+    ```python
+    # Get document
+    doc = Document.getCurrentDocument()
+    
+    # Find all methods with "login" in name
+    for seg in doc.getSegmentsList():
+        for proc in seg.getProcedureList():
+            if "login" in proc.getName().lower():
+                print(f"Found: {proc.getName()} at {hex(proc.getEntryPoint())}")
+    
+    # Find string references
+    strings = doc.getStrings()
+    for string in strings:
+        if "api.example.com" in string.getString():
+            refs = string.getReferences()
+            print(f"API endpoint found: {string.getString()}")
+            print(f"Referenced at: {[hex(r) for r in refs]}")
+    ```
+  </Tab>
+  
+  <Tab title="Type Library">
+    Import iOS frameworks for better type information:
+    
+    1. File → External Type Libraries
+    2. Add iOS SDK headers
+    3. Hopper will use these for better decompilation
+    
+    ```c
+    // Before
+    void *obj = objc_msgSend(rax, "sharedInstance");
+    
+    // After (with type library)
+    UIApplication *app = [UIApplication sharedApplication];
+    ```
+  </Tab>
+  
+  <Tab title="Debugging Integration">
+    Set up debugging workflow:
+    
+    1. Identify interesting functions in Hopper
+    2. Note their addresses
+    3. Set breakpoints in LLDB:
+    ```bash
+    (lldb) br s -a 0x100004a20
+    (lldb) c
+    ```
+    4. Return to Hopper to understand what happens at that address
+  </Tab>
+</Tabs>
+
+## Comparison with Other Tools
+
+<Tabs>
+  <Tab title="vs. Ghidra">
+    ### Hopper Advantages
+    - Faster, more responsive UI
+    - Better macOS integration
+    - Cleaner pseudo-code output
+    - Easier to learn
+    
+    ### Ghidra Advantages
+    - Free and open-source
+    - More powerful scripting (Java/Python)
+    - Better collaboration features (Ghidra Server)
+    - More extensive analyzer options
+    - Cross-platform (Windows/Linux/macOS)
+    
+    <Info>
+      **Recommendation**: Use Hopper for quick analysis and UI-focused work. Use Ghidra for team projects and complex automation.
+    </Info>
+  </Tab>
+  
+  <Tab title="vs. IDA Pro">
+    ### Hopper Advantages
+    - Much more affordable ($99 vs $1,000+)
+    - Simpler, cleaner interface
+    - Native macOS experience
+    - Good enough for most iOS tasks
+    
+    ### IDA Pro Advantages
+    - Industry standard with massive plugin ecosystem
+    - Superior decompiler (Hex-Rays)
+    - Better support for complex architectures
+    - More powerful debugger integration
+    - Collaborative features (IDA Teams)
+    
+    <Info>
+      **Recommendation**: Hopper is excellent for independent researchers and smaller budgets. IDA Pro is better for professional/enterprise use.
+    </Info>
+  </Tab>
+  
+  <Tab title="vs. Binary Ninja">
+    ### Hopper Advantages
+    - Lower cost
+    - Simpler UI for beginners
+    - Fast analysis speed
+    
+    ### Binary Ninja Advantages
+    - More modern architecture
+    - Better API for plugin development
+    - Superior intermediate language (BNIL)
+    - Active development and updates
+    - Cross-platform
+    
+    <Info>
+      **Recommendation**: Both are solid mid-tier options. Choose Hopper if you prioritize macOS integration, Binary Ninja for modern API and cross-platform needs.
+    </Info>
+  </Tab>
+</Tabs>
+
+## Practical Use Cases
+
+### Finding Jailbreak Detection
+
+<Steps>
+  <Step title="Search for Common Checks">
+    ```bash
+    # In Hopper's string search
+    /Applications/Cydia.app
+    /bin/bash
+    /etc/apt
+    cydia://
+    ```
+  </Step>
+  
+  <Step title="Locate Detection Functions">
+    Right-click strings to find functions using them
+  </Step>
+  
+  <Step title="Analyze and Bypass">
+    Understand the logic and:
+    - Note function addresses for hooking with Frida
+    - Identify return value checks
+    - Plan patches or hooks
+  </Step>
+</Steps>
+
+### Extracting API Endpoints
+
+<CodeGroup>
+```python Hopper Script
+doc = Document.getCurrentDocument()
+strings = doc.getStrings()
+
+api_endpoints = []
+for string in strings:
+    s = string.getString()
+    if "http://" in s or "https://" in s:
+        api_endpoints.append(s)
+        print(f"Found endpoint: {s}")
+
+print(f"\nTotal endpoints found: {len(api_endpoints)}")
+```
+
+```bash Manual Search
+# In Hopper string search
+http
+https
+api.
+/v1/
+/v2/
+```
+</CodeGroup>
+
+### Analyzing Encryption
+
+<Steps>
+  <Step title="Find Crypto Imports">
+    Look for:
+    - CommonCrypto functions (`CCCrypt`, `CCKeyDerivationPBKDF`)
+    - OpenSSL functions
+    - Security.framework methods
+  </Step>
+  
+  <Step title="Trace Data Flow">
+    - Identify where sensitive data originates
+    - Follow through encryption functions
+    - See where encrypted data goes
+  </Step>
+  
+  <Step title="Extract Parameters">
+    Look for:
+    - Key generation methods
+    - IV (initialization vector) values
+    - Algorithm selection
+  </Step>
+</Steps>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Save Your Work">
+    - File → Save to preserve your analysis
+    - Saved files (.hop) contain all comments, labels, and custom types
+    - Regular backups recommended for large projects
+  </Accordion>
+  
+  <Accordion title="Use Labels Effectively">
+    - Rename functions immediately when you understand them (`N` key)
+    - Use descriptive names: `checkJailbreak` not `sub_1000048a0`
+    - Add comments for complex logic (`;` key)
+  </Accordion>
+  
+  <Accordion title="Organize Your Analysis">
+    - Use bookmarks for important locations
+    - Create meaningful function names
+    - Document assumptions in comments
+  </Accordion>
+  
+  <Accordion title="Combine with Dynamic Analysis">
+    - Use Hopper for static understanding
+    - Use Frida/LLDB to confirm behavior at runtime
+    - Iterate between static and dynamic analysis
+  </Accordion>
+</AccordionGroup>
+
+## Limitations
+
+<Warning>
+  - **Obfuscation**: Heavily obfuscated code is difficult to analyze
+  - **Swift**: Swift demangling is less robust than Objective-C
+  - **Updates**: Development is slower compared to IDA or Ghidra
+  - **Scripting**: Python API is less extensive than alternatives
+  - **Platform**: macOS/Linux only (no Windows version)
+</Warning>
+
+## Related Tools
+
+<CardGroup cols={2}>
+  <Card title="Ghidra" icon="unlock" href="/tools/ghidra">
+    Free alternative with powerful scripting
+  </Card>
+  
+  <Card title="IDA Pro" icon="microchip" href="/tools/ida-pro">
+    Industry-standard professional tool
+  </Card>
+  
+  <Card title="Frida" icon="code" href="/tools/frida">
+    Dynamic instrumentation companion
+  </Card>
+  
+  <Card title="LLDB" icon="bug" href="/tools/lldb">
+    Debugging companion for runtime analysis
+  </Card>
+</CardGroup>
+
+## Resources
+
+- [Official Hopper Website](https://www.hopperapp.com/)
+- [Hopper Scripting Documentation](https://www.hopperapp.com/sdk/)
+- [iOS Reverse Engineering Community](https://www.reddit.com/r/ReverseEngineering/)

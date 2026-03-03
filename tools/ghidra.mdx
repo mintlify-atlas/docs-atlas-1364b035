@@ -1,0 +1,409 @@
+---
+title: 'Ghidra'
+description: 'Using Ghidra for iOS reverse engineering'
+---
+
+Ghidra is a free and open-source reverse engineering tool developed by the NSA. It provides excellent support for analyzing iOS Mach-O binaries and includes powerful scripting capabilities for automation.
+
+## Setting Up Ghidra for iOS
+
+<Steps>
+  <Step title="Install Ghidra">
+    Download Ghidra from the [official repository](https://github.com/NationalSecurityAgency/ghidra) and install Java JDK 17 or later.
+    
+    ```bash
+    # Extract Ghidra
+    unzip ghidra_10.x_PUBLIC_*.zip
+    cd ghidra_10.x_PUBLIC
+    ./ghidraRun
+    ```
+  </Step>
+  
+  <Step title="Install Swift Command-Line Tools">
+    For Swift demangling support, ensure Swift is installed:
+    
+    <Tabs>
+      <Tab title="macOS">
+        ```bash
+        # Swift comes with Xcode Command Line Tools
+        xcode-select --install
+        
+        # Verify installation
+        xcrun swift-demangle --help
+        ```
+      </Tab>
+      
+      <Tab title="Linux">
+        ```bash
+        # Install Swift
+        wget https://swift.org/builds/swift-5.x-release/ubuntu2004/swift-5.x-RELEASE/swift-5.x-RELEASE-ubuntu20.04.tar.gz
+        tar xzf swift-5.x-RELEASE-ubuntu20.04.tar.gz
+        export PATH=/path/to/swift/usr/bin:$PATH
+        
+        # Verify installation
+        swift-demangle --help
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Configure Ghidra Scripts">
+    Copy the iOS reverse engineering scripts to your Ghidra scripts directory:
+    
+    ```bash
+    # Default Ghidra user scripts directory
+    cp SwiftNameDemangler.py ~/ghidra_scripts/
+    cp SwizzlingDetector.py ~/ghidra_scripts/
+    ```
+  </Step>
+</Steps>
+
+## Loading Mach-O Binaries
+
+<Steps>
+  <Step title="Create a New Project">
+    1. Launch Ghidra
+    2. File → New Project → Non-Shared Project
+    3. Choose a project directory and name
+  </Step>
+  
+  <Step title="Import the Binary">
+    <Tabs>
+      <Tab title="From IPA">
+        ```bash
+        # Extract the IPA file
+        unzip YourApp.ipa
+        
+        # Locate the binary
+        cd Payload/YourApp.app/
+        file YourApp  # Verify it's a Mach-O binary
+        ```
+        
+        Import `Payload/YourApp.app/YourApp` into Ghidra via File → Import File.
+      </Tab>
+      
+      <Tab title="From Device">
+        ```bash
+        # SSH into jailbroken device
+        ssh root@<device-ip>
+        
+        # Locate the app binary
+        cd /var/containers/Bundle/Application/<app-guid>/YourApp.app/
+        
+        # Copy to your machine
+        scp root@<device-ip>:/path/to/binary ~/Desktop/
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Analyze the Binary">
+    1. Double-click the imported file in the project window
+    2. When prompted, click "Yes" to analyze
+    3. In the Analysis Options dialog:
+       - Enable "Objective-C" analyzer
+       - Enable "Decompiler Parameter ID" for better decompilation
+       - Click "Analyze"
+    
+    <Note>
+      Initial analysis may take several minutes for large iOS applications.
+    </Note>
+  </Step>
+</Steps>
+
+## Using the Swift Demangler Script
+
+The `SwiftNameDemangler.py` script automatically demangles Swift symbols in your Ghidra project, making the code much more readable.
+
+### How It Works
+
+The script:
+- Iterates through all functions and labels in the binary
+- Calls `swift-demangle` on mangled Swift names
+- Renames symbols with human-readable names
+- Preserves original names in comments
+
+<CodeGroup>
+```python SwiftNameDemangler.py
+# Demangles Swift class, function, and variable names
+# @author LaurieWired
+# @category Swift
+
+# NOTES:
+# Requires Swift to be installed on the machine
+# Takes some time to run for larger applications
+
+from ghidra.program.model.listing import Function
+from ghidra.program.model.symbol import SymbolType
+from java.lang import System
+import subprocess
+
+def demangle_swift_name(mangled_name):
+    os_name = System.getProperty("os.name").lower()
+    
+    if "mac" in os_name:
+        cmd = 'xcrun swift-demangle --simplified --compact'
+        mangled_name = "'{}'".format(mangled_name)
+    else:
+        cmd = 'swift-demangle --simplified --compact'
+    
+    proc = subprocess.Popen(cmd, shell=True, 
+                          stdout=subprocess.PIPE, 
+                          stdin=subprocess.PIPE)
+    proc.stdin.write(mangled_name)
+    proc.stdin.close()
+    demangled = proc.stdout.read().strip()
+    proc.wait()
+    
+    return demangled
+```
+
+```python clean_demangled_name
+def clean_demangled_name(name):
+    # Remove function arguments
+    name = name.split("(")[0]
+    
+    # Replace spaces and special characters
+    name = name.replace(" ", "_")
+    name = name.replace("<", "_")
+    name = name.replace(">", "_")
+    
+    return name
+```
+</CodeGroup>
+
+### Running the Script
+
+<Steps>
+  <Step title="Open Script Manager">
+    In Ghidra's CodeBrowser window:
+    - Window → Script Manager (or press Ctrl+Shift+S)
+  </Step>
+  
+  <Step title="Locate the Script">
+    - Filter scripts by typing "Swift" in the search box
+    - Find `SwiftNameDemangler.py` in the list
+  </Step>
+  
+  <Step title="Execute the Script">
+    - Select the script and click the green "Run" button
+    - Monitor progress in the Console window
+    - The script will print each renamed symbol
+  </Step>
+</Steps>
+
+<Warning>
+  The Swift demangler script can take 5-15 minutes on large applications with many Swift symbols. Be patient and monitor the Console for progress.
+</Warning>
+
+### Example Output
+
+```
+Renaming functions
+Original: _$s8MyApp12LoginManagerC13authenticateyyF, New: MyApp.LoginManager.authenticate
+Original: _$s8MyApp4UserV5emailSSvg, New: MyApp.User.email.getter
+
+Renaming labels. May take some time...
+Original: _$s8MyApp9ConstantsV6apiURLSSvpZ, New: MyApp.Constants.apiURL
+```
+
+## Detecting Method Swizzling
+
+The `SwizzlingDetector.py` script identifies potential method swizzling, a common technique used in iOS malware and some legitimate apps for runtime method modification.
+
+### What It Detects
+
+The script searches for calls to these Objective-C runtime functions:
+- `method_exchangeImplementations` - Swaps two method implementations
+- `class_getInstanceMethod` - Retrieves an instance method (often used before swizzling)
+- `class_getClassMethod` - Retrieves a class method
+- `method_setImplementation` - Directly sets a method's implementation
+
+<CodeGroup>
+```python SwizzlingDetector.py
+# Detects whether an app is using swizzling and prints all references
+# @author LaurieWired
+# @category iOS
+
+from ghidra.program.model.symbol import SymbolType
+
+def find_swizzling():
+    swizzling_methods = [
+        "method_exchangeImplementations",
+        "class_getInstanceMethod",
+        "class_getClassMethod",
+        "method_setImplementation"
+    ]
+    
+    swizzling_symbols = []
+    for symbol in currentProgram.getSymbolTable().getAllSymbols(True):
+        if symbol.getSymbolType() == SymbolType.FUNCTION and \
+           any(method in symbol.getName() for method in swizzling_methods):
+            swizzling_symbols.append(symbol)
+    
+    if not swizzling_symbols:
+        print("No swizzling found")
+        return
+    
+    for swizzling_symbol in swizzling_symbols:
+        references = list(currentProgram.getReferenceManager()
+                        .getReferencesTo(swizzling_symbol.getAddress()))
+        
+        if not references:
+            print("Swizzling method {} located at address {}, but had no references"
+                  .format(swizzling_symbol.getName(), 
+                         swizzling_symbol.getAddress()))
+            continue
+        
+        print("Swizzling method {} located at address {}, with references:"
+              .format(swizzling_symbol.getName(), 
+                     swizzling_symbol.getAddress()))
+        for ref in references:
+            print("Address: {}".format(ref.getFromAddress()))
+
+find_swizzling()
+```
+</CodeGroup>
+
+### Running the Detection Script
+
+<Steps>
+  <Step title="Open Script Manager">
+    Window → Script Manager in Ghidra CodeBrowser
+  </Step>
+  
+  <Step title="Run SwizzlingDetector.py">
+    - Search for "Swizzling" in the filter
+    - Run `SwizzlingDetector.py`
+    - Check the Console for results
+  </Step>
+  
+  <Step title="Investigate References">
+    If swizzling is detected:
+    1. Note the addresses printed in the Console
+    2. Navigate to each address using Go → Go To (G key)
+    3. Analyze the surrounding code to understand what's being swizzled
+  </Step>
+</Steps>
+
+### Example Output
+
+```
+Swizzling method _method_exchangeImplementations located at address 001a2f40, with references:
+Address: 001b3c88
+Address: 001b4120
+
+Swizzling method _class_getInstanceMethod located at address 001a2f60, with references:
+Address: 001b3c80
+Address: 001b4118
+```
+
+<Info>
+  Method swizzling isn't inherently malicious. Many legitimate apps and frameworks (like analytics SDKs) use it for hooking and monitoring. Always analyze the context.
+</Info>
+
+## Advanced Workflows
+
+### Analyzing Encrypted Binaries
+
+<Steps>
+  <Step title="Check for Encryption">
+    ```bash
+    otool -l YourApp | grep cryptid
+    # cryptid 1 = encrypted, cryptid 0 = decrypted
+    ```
+  </Step>
+  
+  <Step title="Decrypt Using Frida">
+    Use tools like frida-ios-dump to decrypt the binary from a jailbroken device:
+    
+    ```bash
+    frida-ios-dump -H <device-ip> -u <bundle-id>
+    ```
+  </Step>
+  
+  <Step title="Import Decrypted Binary">
+    Import the decrypted binary into Ghidra for analysis
+  </Step>
+</Steps>
+
+### Identifying Key Functions
+
+<Tabs>
+  <Tab title="String References">
+    1. Search → For Strings (Ctrl+Shift+S)
+    2. Filter for interesting strings (API endpoints, keys, etc.)
+    3. Right-click → References → Show References to Address
+    4. Navigate to the function using that string
+  </Tab>
+  
+  <Tab title="Imported Functions">
+    1. Window → Symbol Tree
+    2. Expand "Imports"
+    3. Look for suspicious functions:
+       - `CC_SHA256`, `CC_MD5` (crypto)
+       - `dlopen`, `dlsym` (dynamic loading)
+       - `ptrace` (anti-debugging)
+  </Tab>
+  
+  <Tab title="Objective-C Classes">
+    1. Window → Symbol Tree
+    2. Expand "Classes"
+    3. Browse through class hierarchy
+    4. Double-click methods to decompile
+  </Tab>
+</Tabs>
+
+## Tips and Best Practices
+
+<AccordionGroup>
+  <Accordion title="Performance Optimization">
+    - Disable unused analyzers in Analysis Options to speed up initial analysis
+    - For very large binaries, consider analyzing only specific sections
+    - Close the Decompiler view when not needed to reduce memory usage
+  </Accordion>
+  
+  <Accordion title="Symbol Recovery">
+    - Run SwiftNameDemangler.py early in your analysis
+    - Use File → Parse C Source to import header files for better type information
+    - Enable the "Objective-C" analyzer for proper class and method detection
+  </Accordion>
+  
+  <Accordion title="Collaboration">
+    - Use Ghidra Server for team-based reverse engineering
+    - Export analysis as XML for sharing specific findings
+    - Document findings using Bookmarks (Ctrl+D) and comments
+  </Accordion>
+  
+  <Accordion title="Scripting Workflows">
+    - Write custom scripts to automate repetitive tasks
+    - Use the Flat Program API for simpler scripting
+    - Check existing scripts in the Script Manager before writing new ones
+  </Accordion>
+</AccordionGroup>
+
+## Related Tools
+
+<CardGroup cols={2}>
+  <Card title="IDA Pro" icon="microchip" href="/tools/ida-pro">
+    Commercial alternative with excellent iOS support
+  </Card>
+  
+  <Card title="Hopper" icon="terminal" href="/tools/hopper">
+    macOS-native disassembler with great UI
+  </Card>
+  
+  <Card title="Frida" icon="code" href="/tools/frida">
+    Dynamic instrumentation for runtime analysis
+  </Card>
+  
+  <Card title="LLDB" icon="bug" href="/tools/lldb">
+    Debugging companion for Ghidra analysis
+  </Card>
+</CardGroup>
+
+## Resources
+
+- [Official Ghidra Documentation](https://ghidra-sre.org/)
+- [Ghidra Script Repository](https://github.com/NationalSecurityAgency/ghidra)
+- [Swift ABI Documentation](https://github.com/apple/swift/blob/main/docs/ABI/)

@@ -1,0 +1,365 @@
+---
+title: 'Control Flow Flattening Example'
+description: 'Detailed walkthrough of analyzing control flow flattening obfuscation in ControlFlowFlattening.ipa'
+---
+
+## Overview
+
+This guide provides a detailed walkthrough of analyzing the `ControlFlowFlattening.ipa` sample, which demonstrates control flow flattening - a common obfuscation technique that transforms normal program flow into a state machine to make reverse engineering more difficult.
+
+## What is Control Flow Flattening?
+
+Control flow flattening is an obfuscation technique that converts straightforward program logic into a complex state machine. Instead of normal `if-else` statements and loops, the code is restructured around:
+
+- A **dispatcher** loop (typically a `while` or `for` loop)
+- A **state variable** that controls which code block executes
+- **Switch statements** that route execution based on the state variable
+- **State transitions** that update the state variable
+
+### Normal Code vs. Flattened Code
+
+**Normal Code**:
+```c
+void example() {
+    int a = 5;
+    int b = 10;
+    int c = a + b;
+    if (c > 10) {
+        printf("Large\n");
+    } else {
+        printf("Small\n");
+    }
+}
+```
+
+**Flattened Code**:
+```c
+void example() {
+    int state = 0;
+    int a, b, c;
+    
+    while (state != -1) {
+        switch (state) {
+            case 0:
+                a = 5;
+                state = 1;
+                break;
+            case 1:
+                b = 10;
+                state = 2;
+                break;
+            case 2:
+                c = a + b;
+                state = (c > 10) ? 3 : 4;
+                break;
+            case 3:
+                printf("Large\n");
+                state = -1;
+                break;
+            case 4:
+                printf("Small\n");
+                state = -1;
+                break;
+        }
+    }
+}
+```
+
+## Getting Started
+
+<Steps>
+  <Step title="Extract the IPA">
+    ```bash
+    unzip ControlFlowFlattening.ipa
+    cd Payload/*.app
+    ```
+  </Step>
+  
+  <Step title="Identify the Binary">
+    ```bash
+    # Find the main executable
+    ls -la
+    
+    # Check architecture
+    file <binary_name>
+    lipo -info <binary_name>
+    ```
+  </Step>
+  
+  <Step title="Extract ARM64 Slice">
+    ```bash
+    lipo <binary_name> -thin arm64 -output binary_arm64
+    ```
+  </Step>
+  
+  <Step title="Import to Ghidra">
+    - Create a new Ghidra project
+    - Import `binary_arm64`
+    - Select ARM 64-bit (AARCH64) processor
+    - Run auto-analysis
+  </Step>
+</Steps>
+
+## Analysis Approach
+
+### Step 1: Identify Entry Points
+
+<Steps>
+  <Step title="Locate Main Functions">
+    Start by identifying common iOS entry points:
+    - `_main`
+    - `applicationDidFinishLaunching`
+    - View controller lifecycle methods
+  </Step>
+  
+  <Step title="Review Function Structure">
+    Look for functions with unusual characteristics:
+    - Large functions with many basic blocks
+    - Functions dominated by switch statements
+    - Repetitive control flow patterns
+  </Step>
+</Steps>
+
+### Step 2: Recognize Flattening Patterns
+
+Look for these telltale signs of control flow flattening:
+
+1. **Dispatcher Loop**
+   ```c
+   while (true) {
+       switch (state_variable) {
+           // cases...
+       }
+   }
+   ```
+
+2. **State Variable**
+   - Often initialized at the start of the function
+   - Updated in each case block
+   - Controls which case executes next
+
+3. **Large Switch Statements**
+   - Many case blocks (10+)
+   - Each case ends with updating the state variable
+   - Cases may be in non-sequential order
+
+4. **Obfuscated Control Flow Graph**
+   - In Ghidra's function graph view, you'll see a complex web instead of clear hierarchical structure
+   - Many edges converging to a central switch block
+
+### Step 3: Trace State Transitions
+
+<Steps>
+  <Step title="Identify the State Variable">
+    Find the variable that controls the switch statement:
+    - Usually an integer variable
+    - Modified in each case block
+    - Check what Ghidra names it (e.g., `iVar1`, `local_28`)
+  </Step>
+  
+  <Step title="Map State Flow">
+    Create a table of state transitions:
+    
+    | Case | Action | Next State |
+    |------|--------|------------|
+    | 0 | Initialize variables | 1 |
+    | 1 | Perform calculation | 2 or 3 |
+    | 2 | Print result | -1 |
+    | 3 | Error handling | -1 |
+  </Step>
+  
+  <Step title="Reconstruct Execution Order">
+    Follow the state transitions to understand the actual execution flow:
+    1. Start at initial state (usually 0)
+    2. Follow state assignments
+    3. Map out the logical flow
+  </Step>
+</Steps>
+
+### Step 4: Deobfuscate the Logic
+
+Once you understand the state transitions, you can mentally (or programmatically) reconstruct the original logic:
+
+<Steps>
+  <Step title="Order the Cases">
+    Arrange the case blocks in their actual execution order based on state transitions.
+  </Step>
+  
+  <Step title="Remove State Machinery">
+    Eliminate the state variable assignments and focus on the actual operations performed in each case.
+  </Step>
+  
+  <Step title="Restore Control Structures">
+    Identify where conditional branches occur:
+    - Cases with conditional state assignments → if-else statements
+    - Cases that loop back to earlier states → loops
+  </Step>
+  
+  <Step title="Document Findings">
+    Add comments in Ghidra:
+    ```c
+    // Case 0: Initialize user data
+    // Case 1: Validate input
+    // Case 2: Process request if valid → case 3, else → case 5
+    ```
+  </Step>
+</Steps>
+
+## Example Analysis
+
+Here's what you might find when analyzing a flattened function:
+
+### In Ghidra Decompiler
+
+```c
+void obfuscated_function(void) {
+    int state;
+    int var1;
+    int var2;
+    
+    state = 0x1a3f;
+    
+    while (state != 0) {
+        switch(state) {
+            case 0x1a3f:
+                var1 = get_input();
+                state = 0x2b1c;
+                break;
+                
+            case 0x2b1c:
+                var2 = var1 * 2;
+                state = (var2 > 100) ? 0x4e2a : 0x3d1f;
+                break;
+                
+            case 0x3d1f:
+                process_small_value(var2);
+                state = 0x5f3b;
+                break;
+                
+            case 0x4e2a:
+                process_large_value(var2);
+                state = 0x5f3b;
+                break;
+                
+            case 0x5f3b:
+                cleanup();
+                state = 0;
+                break;
+        }
+    }
+}
+```
+
+### Reconstructed Logic
+
+```c
+void deobfuscated_function(void) {
+    // State 0x1a3f: Get input
+    int var1 = get_input();
+    
+    // State 0x2b1c: Process and branch
+    int var2 = var1 * 2;
+    
+    // State 0x3d1f or 0x4e2a: Conditional processing
+    if (var2 > 100) {
+        process_large_value(var2);
+    } else {
+        process_small_value(var2);
+    }
+    
+    // State 0x5f3b: Cleanup
+    cleanup();
+}
+```
+
+## Key Indicators
+
+When analyzing ControlFlowFlattening.ipa, look for:
+
+- **Large functions** with disproportionate complexity
+- **Single large switch statement** dominating the function
+- **Complex CFG** that doesn't match the apparent simplicity of operations
+- **State variable** being assigned in every case block
+- **Non-sequential case values** (e.g., 0x1a3f, 0x2b1c instead of 0, 1, 2)
+
+## Tools and Techniques
+
+### Ghidra Function Graph
+
+Use the function graph view (Window → Function Graph) to visualize the control flow:
+- Flattened functions show a "star" pattern with many blocks connecting to the central switch
+- Normal functions show hierarchical flow
+
+### Manual Analysis
+
+1. Export decompiled code to text file
+2. Manually trace state transitions
+3. Create a flowchart of actual execution order
+4. Rewrite the function in pseudocode
+
+### Script-Based Deobfuscation
+
+For advanced users, consider writing a Ghidra script to:
+- Identify the state variable
+- Extract state transitions
+- Automatically reorder case blocks
+- Generate readable pseudocode
+
+## Practice Exercises
+
+<Steps>
+  <Step title="Basic Identification">
+    Load the binary and identify which functions are using control flow flattening. Count how many flattened functions exist.
+  </Step>
+  
+  <Step title="State Mapping">
+    Pick one flattened function and create a complete state transition table.
+  </Step>
+  
+  <Step title="Logic Reconstruction">
+    Manually reconstruct the original logic of the function in pseudocode.
+  </Step>
+  
+  <Step title="Compare with NoTampering">
+    Load NoTampering.ipa and find the equivalent function. Compare the flattened version with the original.
+  </Step>
+</Steps>
+
+## Common Challenges
+
+### Non-Sequential Case Values
+
+Case values may be randomized (0x1a3f instead of 0) to make manual analysis harder. Focus on the transitions, not the actual values.
+
+### Opaque Predicates
+
+Some transitions may use complex expressions that always evaluate to the same value. These are "opaque predicates" designed to confuse analysis tools.
+
+### Nested Switches
+
+Some sophisticated obfuscators use nested switch statements. Handle these by analyzing the inner switch first, then the outer dispatcher.
+
+## Tips
+
+<Note>
+  Start by identifying the simplest flattened function first. Once you understand the pattern, more complex examples become easier to analyze.
+</Note>
+
+- Use Ghidra's "Rename Variable" feature to give the state variable a meaningful name
+- Add comments for each case block describing what it does
+- Use colored highlights in the function graph to mark different logical sections
+- Take notes externally - create a flowchart or state diagram
+
+## Next Steps
+
+After mastering control flow flattening analysis:
+
+- Analyze more complex obfuscation combinations
+- Learn about automated deobfuscation tools
+- Study other obfuscation techniques (string encryption, opaque predicates)
+- Compare with other sample applications
+
+## See Also
+
+- [Sample IPA Files](/examples/sample-ipa-files) - Overview of all example applications
+- [Swizzling Example](/examples/swizzling-example) - Analysis of method swizzling

@@ -1,0 +1,643 @@
+---
+title: "IPA File Format"
+description: "Understanding the structure, extraction, and analysis of iOS IPA files"
+---
+
+## Overview
+
+An IPA (iOS App Store Package) file is the file format used to distribute iOS applications. Despite its `.ipa` extension, it's actually a ZIP archive with a specific internal structure mandated by Apple. Understanding IPA files is the first step in iOS reverse engineering.
+
+<Note>
+IPA stands for **iOS App Store Package**, though the format is used for all iOS app distribution methods, not just the App Store.
+</Note>
+
+## IPA File Structure
+
+An IPA file is a ZIP archive containing the app bundle and metadata:
+
+```
+MyApp.ipa (ZIP archive)
+├── Payload/
+│   └── MyApp.app/              ← The app bundle
+│       ├── MyApp               ← Mach-O executable
+│       ├── Info.plist          ← App metadata
+│       ├── embedded.mobileprovision
+│       ├── _CodeSignature/
+│       │   └── CodeResources
+│       ├── Assets.car          ← Asset catalog
+│       ├── Base.lproj/         ← Localization
+│       ├── Frameworks/         ← Embedded frameworks
+│       └── PlugIns/            ← App extensions
+├── iTunesArtwork              ← App icon (512x512)
+├── iTunesArtwork@2x           ← App icon (1024x1024)
+├── iTunesMetadata.plist       ← App Store metadata
+└── META-INF/                  ← Distribution metadata
+    └── com.apple.ZipMetadata.plist
+```
+
+### Key Components
+
+<AccordionGroup>
+  <Accordion icon="folder" title="Payload Directory">
+    Contains the main application bundle (`.app`).
+    
+    **Always exactly one `.app` bundle** inside the `Payload/` directory.
+    
+    ```bash
+    # List Payload contents
+    unzip -l MyApp.ipa | grep "Payload/"
+    ```
+    
+    This is the actual application that gets installed on the device.
+  </Accordion>
+
+  <Accordion icon="image" title="iTunesArtwork">
+    High-resolution app icons (without file extension).
+    
+    - `iTunesArtwork`: 512x512 PNG
+    - `iTunesArtwork@2x`: 1024x1024 PNG
+    
+    ```bash
+    # Extract and view
+    unzip MyApp.ipa iTunesArtwork
+    file iTunesArtwork
+    # Output: PNG image data, 512 x 512, 8-bit/color RGBA
+    ```
+    
+    <Tip>
+    These files can be renamed with `.png` extension to view as regular images.
+    </Tip>
+  </Accordion>
+
+  <Accordion icon="info-circle" title="iTunesMetadata.plist">
+    App Store metadata including:
+    - Bundle identifier
+    - App version
+    - Purchase date and price
+    - Apple ID of purchaser
+    - Artist/developer name
+    
+    ```bash
+    # Extract and view
+    unzip -p MyApp.ipa iTunesMetadata.plist | plutil -p -
+    ```
+    
+    **Only present in App Store downloads**, not in development or ad-hoc builds.
+  </Accordion>
+
+  <Accordion icon="fingerprint" title="META-INF Directory">
+    Contains distribution metadata in `com.apple.ZipMetadata.plist`.
+    
+    This includes:
+    - Compression information
+    - File ordering hints
+    - iOS-specific ZIP metadata
+    
+    ```bash
+    unzip -p MyApp.ipa META-INF/com.apple.ZipMetadata.plist
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Types of IPA Files
+
+iOS apps can be packaged in different ways depending on distribution method:
+
+<Tabs>
+  <Tab title="App Store">
+    **Downloaded from Apple's App Store**
+    
+    Characteristics:
+    - Encrypted with Apple's FairPlay DRM
+    - Includes `iTunesMetadata.plist`
+    - Distribution certificate signature
+    - No device restrictions
+    - Must be decrypted before analysis
+    
+    ```bash
+    # Check encryption
+    otool -l MyApp.app/MyApp | grep -A 5 LC_ENCRYPTION_INFO
+    # cryptid 1 = encrypted
+    ```
+    
+    <Warning>
+    App Store IPAs must be decrypted using a jailbroken device before reverse engineering.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Ad Hoc">
+    **Enterprise or internal distribution**
+    
+    Characteristics:
+    - Not encrypted
+    - Signed with distribution certificate
+    - Device UDIDs in provisioning profile (up to 100)
+    - No `iTunesMetadata.plist`
+    - Ready for analysis
+    
+    ```bash
+    # Check provisioning profile
+    security cms -D -i embedded.mobileprovision | \
+      plutil -extract ProvisionedDevices xml1 -o - -
+    ```
+  </Tab>
+  
+  <Tab title="Development">
+    **Built by developers for testing**
+    
+    Characteristics:
+    - Not encrypted
+    - Development certificate signature
+    - `get-task-allow` entitlement present
+    - Device UDIDs in profile
+    - Debugger can attach
+    
+    ```bash
+    # Check for debug entitlement
+    codesign -d --entitlements :- MyApp.app/MyApp | \
+      grep "get-task-allow"
+    ```
+    
+    <Tip>
+    Development builds are ideal for reverse engineering as they allow debugger attachment.
+    </Tip>
+  </Tab>
+  
+  <Tab title="Enterprise">
+    **Distributed via Enterprise program**
+    
+    Characteristics:
+    - Not encrypted
+    - Enterprise distribution certificate
+    - No device restrictions
+    - Can be installed outside App Store
+    - Subject to Apple revocation
+    
+    <Note>
+    Enterprise apps are often used for internal corporate apps but have been abused for unauthorized distribution.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Extracting IPA Files
+
+### Basic Extraction
+
+<Steps>
+  <Step title="Unzip the IPA">
+    ```bash
+    # Create extraction directory
+    mkdir MyApp_extracted
+    
+    # Extract IPA
+    unzip MyApp.ipa -d MyApp_extracted/
+    
+    # Navigate to app bundle
+    cd MyApp_extracted/Payload/MyApp.app/
+    ```
+  </Step>
+  
+  <Step title="Examine contents">
+    ```bash
+    # List all files
+    ls -la
+    
+    # Find large files (frameworks, assets)
+    find . -type f -size +1M -exec ls -lh {} \;
+    
+    # Count file types
+    find . -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn
+    ```
+  </Step>
+  
+  <Step title="Verify app bundle">
+    ```bash
+    # Check binary architecture
+    file MyApp
+    lipo -info MyApp
+    
+    # Verify code signature
+    codesign -dv MyApp
+    
+    # Check Info.plist
+    plutil -p Info.plist
+    ```
+  </Step>
+</Steps>
+
+### Selective Extraction
+
+<CodeGroup>
+```bash Extract Specific Files
+# Extract only the binary
+unzip -j MyApp.ipa "Payload/MyApp.app/MyApp" -d /tmp/
+
+# Extract Info.plist
+unzip -j MyApp.ipa "Payload/MyApp.app/Info.plist"
+
+# Extract provisioning profile
+unzip -j MyApp.ipa "Payload/MyApp.app/embedded.mobileprovision"
+```
+
+```bash List Without Extracting
+# List archive contents
+unzip -l MyApp.ipa
+
+# View specific file without extracting
+unzip -p MyApp.ipa "Payload/MyApp.app/Info.plist" | plutil -p -
+
+# Check archive integrity
+unzip -t MyApp.ipa
+```
+</CodeGroup>
+
+## Inspecting IPA Contents
+
+### Metadata Analysis
+
+<Tabs>
+  <Tab title="Info.plist">
+    Contains app configuration and metadata.
+    
+    ```bash
+    # Extract and view
+    unzip -p MyApp.ipa "Payload/*.app/Info.plist" | plutil -p -
+    
+    # Key properties to examine:
+    # - CFBundleIdentifier: Bundle ID
+    # - CFBundleVersion: Build number
+    # - CFBundleShortVersionString: Version
+    # - MinimumOSVersion: Min iOS version
+    # - UIDeviceFamily: iPhone/iPad support
+    # - UIRequiredDeviceCapabilities: Required features
+    # - NSAppTransportSecurity: Network security settings
+    # - CFBundleURLTypes: URL schemes
+    ```
+  </Tab>
+  
+  <Tab title="Provisioning Profile">
+    Reveals signing and distribution details.
+    
+    ```bash
+    # Extract profile
+    unzip -p MyApp.ipa "Payload/*.app/embedded.mobileprovision" | \
+      security cms -D -i - > profile.plist
+    
+    # View profile
+    plutil -p profile.plist
+    
+    # Check expiration
+    plutil -extract ExpirationDate xml1 -o - profile.plist
+    
+    # List devices (dev/ad-hoc only)
+    plutil -extract ProvisionedDevices xml1 -o - profile.plist
+    
+    # Extract entitlements
+    plutil -extract Entitlements xml1 -o - profile.plist
+    ```
+  </Tab>
+  
+  <Tab title="iTunesMetadata.plist">
+    App Store purchase information.
+    
+    ```bash
+    # Only in App Store IPAs
+    unzip -p MyApp.ipa iTunesMetadata.plist | plutil -p -
+    
+    # Reveals:
+    # - softwareVersionBundleId: Bundle ID
+    # - bundleShortVersionString: Version
+    # - artistName: Developer name
+    # - itemName: App name
+    # - purchaseDate: When downloaded
+    # - appleId: Purchaser's account (hashed)
+    ```
+  </Tab>
+</Tabs>
+
+### Binary Analysis
+
+<CodeGroup>
+```bash Architecture & Type
+# Identify file type
+file Payload/MyApp.app/MyApp
+
+# Check supported architectures
+lipo -info Payload/MyApp.app/MyApp
+# Output: Non-fat file: arm64
+
+# Check encryption status
+otool -l Payload/MyApp.app/MyApp | grep -A 5 cryptid
+```
+
+```bash Dependencies & Frameworks
+# List linked libraries
+otool -L Payload/MyApp.app/MyApp
+
+# List embedded frameworks
+find Payload/MyApp.app/Frameworks -name "*.framework"
+
+# Check framework architectures
+for fw in Payload/MyApp.app/Frameworks/*.framework; do
+    echo "$fw:"
+    lipo -info "$fw/$(basename "${fw%.framework}")"
+done
+```
+
+```bash Symbols & Strings
+# Extract symbols
+nm Payload/MyApp.app/MyApp > symbols.txt
+
+# Extract Objective-C classes (if decrypted)
+class-dump Payload/MyApp.app/MyApp > headers.txt
+
+# Extract strings
+strings Payload/MyApp.app/MyApp > strings.txt
+
+# Search for API keys/secrets
+strings Payload/MyApp.app/MyApp | grep -iE "(api|key|secret|token|password)"
+```
+</CodeGroup>
+
+### Resource Analysis
+
+<CardGroup cols={2}>
+  <Card title="Asset Catalogs" icon="images">
+    Extract images from `Assets.car`
+    
+    ```bash
+    # Use third-party tools
+    acextract Assets.car -o assets/
+    ```
+  </Card>
+  
+  <Card title="Localization" icon="language">
+    Examine localized strings
+    
+    ```bash
+    # List languages
+    find . -name "*.lproj"
+    
+    # View strings
+    plutil -p en.lproj/Localizable.strings
+    ```
+  </Card>
+  
+  <Card title="Storyboards/NIBs" icon="window">
+    UI definition files
+    
+    ```bash
+    find . -name "*.storyboardc"
+    find . -name "*.nib"
+    ```
+  </Card>
+  
+  <Card title="Databases" icon="database">
+    Embedded data files
+    
+    ```bash
+    # Find databases
+    find . -name "*.db" -o -name "*.sqlite"
+    
+    # Inspect schema
+    sqlite3 data.db ".schema"
+    ```
+  </Card>
+</CardGroup>
+
+## Working with Example IPAs
+
+The project includes example obfuscated apps:
+
+```bash
+# List example IPAs
+ls -lh ~/workspace/source/ObfuscatedAppExamples/
+
+# ControlFlowFlattening.ipa - Control flow obfuscation
+# NoTampering.ipa - Anti-tampering checks
+# ObjectiveSwizzling.ipa - Method swizzling examples
+```
+
+### Analyzing Example: NoTampering.ipa
+
+<Steps>
+  <Step title="Extract IPA">
+    ```bash
+    mkdir -p /tmp/notamper_analysis
+    unzip ~/workspace/source/ObfuscatedAppExamples/NoTampering.ipa \
+      -d /tmp/notamper_analysis/
+    cd /tmp/notamper_analysis/Payload/*.app/
+    ```
+  </Step>
+  
+  <Step title="Examine metadata">
+    ```bash
+    # Check bundle info
+    plutil -p Info.plist | grep -E "CFBundle(Identifier|Version|Name)"
+    
+    # View entitlements
+    codesign -d --entitlements :- NoTampering
+    
+    # Check code signature
+    codesign -dv NoTampering
+    ```
+  </Step>
+  
+  <Step title="Analyze binary">
+    ```bash
+    # Check architecture
+    file NoTampering
+    
+    # List symbols
+    nm NoTampering | grep -i "tamper"
+    
+    # Search strings for anti-tampering
+    strings NoTampering | grep -iE "(debug|jail|tamper|crack)"
+    ```
+  </Step>
+  
+  <Step title="Inventory resources">
+    ```bash
+    # List all files
+    find . -type f | sort
+    
+    # Check for embedded frameworks
+    ls -la Frameworks/ 2>/dev/null
+    
+    # Find configuration files
+    find . -name "*.plist" -o -name "*.json" -o -name "*.xml"
+    ```
+  </Step>
+</Steps>
+
+## Creating IPA Files
+
+### From App Bundle
+
+<Steps>
+  <Step title="Prepare app bundle">
+    Ensure the app is properly signed and contains all required components.
+  </Step>
+  
+  <Step title="Create Payload directory">
+    ```bash
+    mkdir Payload
+    cp -r MyApp.app Payload/
+    ```
+  </Step>
+  
+  <Step title="Create ZIP archive">
+    ```bash
+    zip -r MyApp.ipa Payload
+    ```
+  </Step>
+  
+  <Step title="Add optional metadata">
+    ```bash
+    # Add app icon (if available)
+    cp icon-512.png iTunesArtwork
+    cp icon-1024.png iTunesArtwork@2x
+    
+    # Add to IPA
+    zip MyApp.ipa iTunesArtwork iTunesArtwork@2x
+    ```
+  </Step>
+</Steps>
+
+### Using Xcode
+
+```bash
+# Build and archive
+xcodebuild -scheme MyApp -archivePath MyApp.xcarchive archive
+
+# Export IPA
+xcodebuild -exportArchive \
+  -archivePath MyApp.xcarchive \
+  -exportPath . \
+  -exportOptionsPlist exportOptions.plist
+```
+
+## IPA Distribution Methods
+
+<Tabs>
+  <Tab title="App Store">
+    Official distribution through Apple's App Store.
+    
+    - Requires App Store Connect submission
+    - App Review required
+    - Binary encrypted by Apple
+    - Best for public apps
+  </Tab>
+  
+  <Tab title="TestFlight">
+    Beta testing through Apple's TestFlight.
+    
+    - Up to 10,000 testers
+    - 90-day build expiration
+    - Limited App Review (beta)
+    - Encrypted like App Store
+  </Tab>
+  
+  <Tab title="Ad Hoc">
+    Direct distribution to up to 100 registered devices.
+    
+    - Requires device UDID collection
+    - No App Review
+    - Not encrypted
+    - Good for internal testing
+  </Tab>
+  
+  <Tab title="Enterprise">
+    Internal distribution within organization.
+    
+    - Unlimited devices
+    - No App Store
+    - Requires Enterprise program ($299/year)
+    - Subject to abuse monitoring
+  </Tab>
+  
+  <Tab title="Development">
+    Direct installation during development.
+    
+    - Xcode installation
+    - Wireless debugging (iOS 16+)
+    - No distribution outside dev team
+    - Shortest expiration (7 days for free accounts)
+  </Tab>
+</Tabs>
+
+## Security Considerations
+
+<Warning>
+When analyzing IPA files, be aware of:
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="Malware" icon="virus">
+    IPAs from untrusted sources may contain malicious code.
+  </Card>
+  
+  <Card title="Modified Apps" icon="pen-to-square">
+    Re-signed apps may have injected code or removed security checks.
+  </Card>
+  
+  <Card title="Privacy" icon="user-secret">
+    `iTunesMetadata.plist` contains purchaser information.
+  </Card>
+  
+  <Card title="Legal" icon="gavel">
+    Reverse engineering may violate terms of service or copyright law.
+  </Card>
+</CardGroup>
+
+## Useful Tools
+
+<Tabs>
+  <Tab title="Command Line">
+    ```bash
+    unzip        # Extract IPA files
+    file         # Identify file types
+    otool        # Mach-O inspection
+    codesign     # Signature verification
+    security     # Keychain & certificates
+    plutil       # Property list manipulation
+    class-dump   # Objective-C header extraction
+    ```
+  </Tab>
+  
+  <Tab title="GUI Tools">
+    - **iMazing**: iOS device manager and app extractor
+    - **Apple Configurator**: Enterprise app deployment
+    - **iFunBox**: File system browser
+    - **iExplorer**: App and data extraction
+    - **Hopper/Ghidra/IDA**: Binary analysis
+  </Tab>
+  
+  <Tab title="Specialized">
+    - **Clutch**: IPA decryption (jailbreak)
+    - **frida-ios-dump**: Frida-based decryption
+    - **bfinject**: Runtime decryption
+    - **flexdecrypt**: Modern decryption tool
+    - **ios-app-signer**: Re-signing IPAs
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="iOS App Structure" icon="folder-tree" href="/fundamentals/ios-app-structure">
+    Deep dive into the app bundle structure inside IPAs.
+  </Card>
+  
+  <Card title="Code Signing" icon="shield" href="/fundamentals/code-signing">
+    Understand how IPAs are signed and verified.
+  </Card>
+  
+  <Card title="Mach-O Format" icon="file-binary" href="/fundamentals/mach-o-format">
+    Learn about the executable binary format.
+  </Card>
+  
+  <Card title="Static Analysis" icon="magnifying-glass">
+    Begin analyzing IPA contents for security research.
+  </Card>
+</CardGroup>

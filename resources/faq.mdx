@@ -1,0 +1,466 @@
+---
+title: 'FAQ'
+description: 'Frequently asked questions about iOS reverse engineering'
+icon: 'circle-question'
+---
+
+Find answers to common questions about iOS reverse engineering, tool setup, legal considerations, and where to get help.
+
+## Getting Started
+
+<AccordionGroup>
+  <Accordion title="Do I need a jailbroken device to do iOS reverse engineering?" icon="mobile">
+    **Not always, but it helps significantly.**
+
+    - **Without jailbreak**: You can analyze IPA files, disassemble binaries, examine plist files, and use some dynamic analysis techniques
+    - **With jailbreak**: You gain full filesystem access, can use runtime manipulation tools like Frida more easily, and can bypass many security restrictions
+
+    Many techniques in this reference work on non-jailbroken devices, but a jailbroken test device is recommended for serious reverse engineering work.
+
+    <Tip>
+      Consider using a secondary device for jailbreaking. Never jailbreak your primary device.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="What computer do I need for iOS reverse engineering?" icon="laptop">
+    **Any modern computer will work, though macOS offers some advantages.**
+
+    **macOS:**
+    - Access to Xcode and iOS development tools
+    - Better support for some iOS-specific tooling
+    - Can build and sign your own IPAs easily
+
+    **Linux:**
+    - Excellent support for most reverse engineering tools
+    - Frida, Ghidra, and radare2 work great
+    - Missing some macOS-only tools but workarounds exist
+
+    **Windows:**
+    - Most cross-platform tools available
+    - May require WSL for some tools
+    - Can handle most reverse engineering tasks
+
+    **Minimum specs**: 8GB RAM, 50GB free disk space, modern processor
+  </Accordion>
+
+  <Accordion title="What programming languages should I know?" icon="code">
+    **Essential languages for iOS reverse engineering:**
+
+    1. **Objective-C** - Still heavily used in iOS apps and system frameworks
+    2. **Swift** - Modern iOS development language
+    3. **ARM Assembly** - Understanding ARM64 assembly is crucial for deep analysis
+    4. **Python** - For scripting and automation
+    5. **JavaScript** - For Frida scripting
+
+    You don't need to master all of these before starting, but familiarity helps tremendously.
+
+    <Note>
+      Start with Python and JavaScript for scripting, then learn Objective-C/Swift, and gradually build ARM assembly knowledge.
+    </Note>
+  </Accordion>
+
+  <Accordion title="How do I get IPA files to analyze?" icon="file-zipper">
+    **Several legal methods exist:**
+
+    1. **Your own apps** - Extract IPAs from apps you've developed
+    2. **iTunes backup** - Extract from local backups (requires proper tools)
+    3. **Decrypt apps you own** - On jailbroken devices, decrypt apps you've purchased
+    4. **Open source apps** - Many open source iOS apps provide IPAs
+    5. **Educational examples** - Some resources provide sample apps for learning
+
+    <Warning>
+      Never download IPAs from untrusted sources. They may contain malware or be illegally distributed.
+    </Warning>
+
+    **Tools for extracting IPAs:**
+    - **frida-ios-dump** - Extract and decrypt IPAs from jailbroken devices
+    - **CrackerXI** - iOS tweak for dumping apps
+    - **Apple Configurator** - Official tool that can extract certain apps
+  </Accordion>
+</AccordionGroup>
+
+## Tool Setup & Technical Issues
+
+<AccordionGroup>
+  <Accordion title="Frida won't connect to my device. What should I check?" icon="bug">
+    **Common solutions:**
+
+    1. **Verify Frida server is running**
+       ```bash
+       # Check if frida-server is running on device
+       frida-ps -U
+       ```
+
+    2. **Check version compatibility**
+       - Frida client and server versions must match
+       ```bash
+       # Check client version
+       frida --version
+       # Check server version on device
+       frida-server --version
+       ```
+
+    3. **USB connection issues**
+       - Try a different USB cable
+       - Disable and re-enable USB debugging
+       - Restart usbmuxd: `sudo usbmuxd -k`
+
+    4. **Network connection (if using WiFi)**
+       - Verify device IP address
+       - Check firewall settings
+       - Ensure device and computer are on same network
+
+    5. **Reinstall frida-server**
+       - Download matching version from GitHub releases
+       - Transfer to device and restart
+
+    <Tip>
+      Run `frida-ps -U` to list processes. If this works, Frida is connected correctly.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="How do I analyze Swift apps? They look different than Objective-C." icon="code">
+    **Swift reverse engineering has unique challenges:**
+
+    **Differences from Objective-C:**
+    - Name mangling makes function names cryptic
+    - Different calling conventions
+    - No traditional message passing
+
+    **Tools and techniques:**
+    1. **swift-demangle** - Demangle Swift symbols
+       ```bash
+       xcrun swift-demangle _T0Sq
+       ```
+
+    2. **Use Hopper or Ghidra** - Both can demangle Swift automatically
+
+    3. **Frida Swift Bridge** - Hook Swift functions using Frida
+       ```javascript
+       // Hook Swift function
+       var moduleName = "YourApp";
+       var addr = Module.findExportByName(moduleName, "_T0...");
+       Interceptor.attach(addr, { /* ... */ });
+       ```
+
+    4. **Class and method discovery**
+       - Use `class-dump-swift` or similar tools
+       - Analyze with `nm` command for symbols
+
+    <Note>
+      Swift apps are harder to reverse than Objective-C, but the same principles apply.
+    </Note>
+  </Accordion>
+
+  <Accordion title="My analysis tool crashes when loading large binaries. Help!" icon="exclamation-triangle">
+    **Performance optimization tips:**
+
+    1. **Increase available memory**
+       - Close other applications
+       - Increase swap space on Linux
+       - Consider upgrading RAM if frequently analyzing large apps
+
+    2. **Adjust tool settings**
+       - In Ghidra: Increase heap size in `ghidraRun` script
+       - In IDA: Adjust database settings
+       - Disable automatic analysis initially
+
+    3. **Work with specific sections**
+       - Focus on specific functions rather than full binary analysis
+       - Extract and analyze specific libraries
+
+    4. **Use command-line tools**
+       - Sometimes lighter than full GUI applications
+       - `strings`, `nm`, `otool` for quick analysis
+
+    5. **Split analysis**
+       - Analyze framework by framework
+       - Use static analysis for some parts, dynamic for others
+  </Accordion>
+
+  <Accordion title="What's the difference between static and dynamic analysis?" icon="balance-scale">
+    **Both are essential and complementary:**
+
+    ### Static Analysis
+    **Examining the app without running it**
+
+    ✅ **Pros:**
+    - See all code paths, not just executed ones
+    - No need for runtime environment
+    - Can analyze malicious code safely
+    - Great for understanding overall structure
+
+    ❌ **Cons:**
+    - Encrypted or obfuscated code is harder to analyze
+    - Dynamic behavior unclear
+    - Time-consuming for large apps
+
+    **Tools:** Ghidra, IDA Pro, Hopper, class-dump
+
+    ### Dynamic Analysis
+    **Examining the app while it's running**
+
+    ✅ **Pros:**
+    - See actual runtime behavior
+    - Bypass some obfuscation automatically
+    - Monitor network traffic and data flow
+    - Test specific scenarios
+
+    ❌ **Cons:**
+    - Only see executed code paths
+    - Requires runtime environment
+    - May trigger anti-debugging measures
+    - Could affect production systems if not careful
+
+    **Tools:** Frida, Cycript, debuggers, network proxies
+
+    <Tip>
+      Best practice: Start with static analysis to understand structure, then use dynamic analysis to confirm behavior and test hypotheses.
+    </Tip>
+  </Accordion>
+</AccordionGroup>
+
+## Legal & Ethical Considerations
+
+<AccordionGroup>
+  <Accordion title="Is iOS reverse engineering legal?" icon="scale-balanced">
+    **The legal landscape is complex and varies by jurisdiction.**
+
+    ### Generally Legal:
+    - **Security research** on apps you own for vulnerability discovery
+    - **Interoperability** - Making your software work with other software
+    - **Educational purposes** - Learning how software works
+    - **Accessibility** - Making apps more accessible
+
+    ### Potentially Illegal:
+    - **Circumventing DRM** - Violates DMCA in the US
+    - **Violating ToS** - May have civil consequences
+    - **Copyright infringement** - Copying or distributing protected code
+    - **Creating competing products** using reverse-engineered code
+
+    <Warning>
+      This is not legal advice. Consult with a lawyer familiar with your jurisdiction before engaging in reverse engineering for commercial or sensitive purposes.
+    </Warning>
+
+    ### Best Practices:
+    - Only reverse engineer apps you have the right to analyze
+    - Follow responsible disclosure for security vulnerabilities
+    - Respect intellectual property rights
+    - Use reverse engineering for legitimate purposes
+    - Stay informed about applicable laws in your region
+  </Accordion>
+
+  <Accordion title="What should I do if I find a security vulnerability?" icon="shield">
+    **Follow responsible disclosure practices:**
+
+    <Steps>
+      <Step title="Document the vulnerability">
+        - Write a detailed description
+        - Create proof-of-concept code
+        - Document steps to reproduce
+        - Assess severity and impact
+      </Step>
+
+      <Step title="Contact the vendor privately">
+        - Use official security contact (security@company.com)
+        - Give them time to fix (typically 90 days)
+        - Provide all necessary details
+        - Avoid public disclosure initially
+      </Step>
+
+      <Step title="Follow up appropriately">
+        - Track vendor response
+        - Coordinate disclosure timeline
+        - Consider bug bounty programs
+        - Request CVE if applicable
+      </Step>
+
+      <Step title="Public disclosure">
+        - Only after vendor has patched or deadline passed
+        - Publish findings responsibly
+        - Give users actionable advice
+        - Credit vendor cooperation
+      </Step>
+    </Steps>
+
+    **For Apple products:**
+    - Report to [Apple Security Bounty](https://security.apple.com/)
+    - Use product-security@apple.com for issues
+    - Apple offers rewards for qualifying vulnerabilities
+
+    <Note>
+      Responsible disclosure protects users while giving vendors time to fix issues.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Can I reverse engineer apps for my employer/client?" icon="briefcase">
+    **Professional reverse engineering requires careful consideration:**
+
+    ### Before You Start:
+    1. **Get proper authorization**
+       - Written permission from app owner or client
+       - Clear scope of work defined
+       - Legal review of engagement terms
+
+    2. **Understand the purpose**
+       - Security assessment (usually permissible)
+       - Competitive analysis (potentially problematic)
+       - Intellectual property theft (illegal)
+
+    3. **Review applicable agreements**
+       - App's Terms of Service
+       - End User License Agreement
+       - Your employment contract
+       - Client contract and SOW
+
+    4. **Consider jurisdiction**
+       - Laws vary by country
+       - Cross-border issues may apply
+       - Industry-specific regulations (healthcare, finance, etc.)
+
+    ### Professional Guidelines:
+    - Maintain detailed documentation
+    - Use findings only for authorized purposes
+    - Protect confidentiality of discoveries
+    - Follow industry codes of ethics (ACM, ISC², etc.)
+
+    <Warning>
+      Always get legal approval before conducting reverse engineering for professional purposes.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+## Getting Help
+
+<AccordionGroup>
+  <Accordion title="Where can I ask questions about iOS reverse engineering?" icon="comments">
+    **Community resources for getting help:**
+
+    ### Discussion Forums
+    - **r/ReverseEngineering** - Active subreddit for RE questions
+    - **r/jailbreakdevelopers** - iOS-specific technical discussions
+    - **Stack Overflow** - Use tags: `ios`, `reverse-engineering`, `frida`
+
+    ### Real-time Chat
+    - **Discord servers** - Various iOS security communities
+    - **Frida Slack** - For Frida-specific questions
+    - **IRC channels** - #iphonedev and related channels
+
+    ### GitHub
+    - **Issue trackers** - For tool-specific problems
+    - **Discussions** - Many projects have GitHub Discussions enabled
+    - **This project** - [Open an issue](https://github.com/LaurieWired/iOS_Reverse_Engineering/issues) for questions about these tools
+
+    <Tip>
+      When asking for help, provide:
+      - iOS version
+      - Tool versions
+      - Exact error messages
+      - Steps to reproduce
+      - What you've already tried
+    </Tip>
+  </Accordion>
+
+  <Accordion title="How do I know if I'm making progress in learning?" icon="chart-line">
+    **Milestones in your iOS reverse engineering journey:**
+
+    ### Beginner Level
+    ✅ Can extract and examine IPA files
+    ✅ Understand basic iOS app structure
+    ✅ Can use class-dump to extract headers
+    ✅ Comfortable with basic command-line tools
+    ✅ Can read simple Objective-C code
+
+    ### Intermediate Level
+    ✅ Can use Frida to hook functions
+    ✅ Comfortable with Ghidra or similar tools
+    ✅ Can read ARM assembly
+    ✅ Understand iOS security mechanisms
+    ✅ Can bypass basic security checks
+
+    ### Advanced Level
+    ✅ Can find and exploit vulnerabilities
+    ✅ Comfortable with Swift reverse engineering
+    ✅ Can write custom analysis tools
+    ✅ Understand kernel-level concepts
+    ✅ Can defeat advanced obfuscation
+
+    <Note>
+      Progress is gradual. Focus on consistent practice rather than rapid advancement.
+    </Note>
+
+    **Practice exercises:**
+    - Analyze open-source apps
+    - Solve iOS CTF challenges
+    - Contribute to this project
+    - Write blog posts about your findings
+  </Accordion>
+
+  <Accordion title="What if I get stuck on a specific problem?" icon="life-ring">
+    **Systematic problem-solving approach:**
+
+    <Steps>
+      <Step title="Research the error/issue">
+        - Search exact error messages
+        - Check tool documentation
+        - Review GitHub issues for similar problems
+      </Step>
+
+      <Step title="Break down the problem">
+        - Identify smallest reproducible case
+        - Isolate variables
+        - Test components individually
+      </Step>
+
+      <Step title="Try alternative approaches">
+        - Use different tools
+        - Try different techniques
+        - Simplify your objective
+      </Step>
+
+      <Step title="Ask for help effectively">
+        - Provide complete context
+        - Share relevant code/commands
+        - Explain what you've tried
+        - Be specific about what you need
+      </Step>
+    </Steps>
+
+    **Before asking for help, have you:**
+    - ✅ Read the documentation?
+    - ✅ Searched for similar issues?
+    - ✅ Tried basic troubleshooting?
+    - ✅ Prepared a minimal example?
+    - ✅ Checked tool versions?
+
+    <Tip>
+      Often the process of preparing a good question helps you solve the problem yourself!
+    </Tip>
+  </Accordion>
+</AccordionGroup>
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="Contributing Guide" icon="code-pull-request" href="/resources/contributing">
+    Learn how to contribute to this project
+  </Card>
+
+  <Card title="Further Reading" icon="book-open" href="/resources/further-reading">
+    Explore additional learning resources
+  </Card>
+
+  <Card title="GitHub Repository" icon="github" href="https://github.com/LaurieWired/iOS_Reverse_Engineering">
+    Access tools, scripts, and examples
+  </Card>
+
+  <Card title="Project Wiki" icon="book" href="https://github.com/LaurieWired/iOS_Reverse_Engineering/wiki/iOS-RE-Reference">
+    Comprehensive reference materials
+  </Card>
+</CardGroup>
+
+---
+
+<Note>
+  Don't see your question here? Open an issue on GitHub or contribute an answer by submitting a pull request!
+</Note>
